@@ -4,6 +4,7 @@ from uuid import UUID
 
 from src.dto import (
     CreateKnowledgeEntryRequest,
+    KnowledgeEntryData,
     KnowledgeEntryListResponse,
     KnowledgeEntryResponse,
 )
@@ -13,7 +14,8 @@ from src.services import knowledge_service
 
 def create_entry(payload: CreateKnowledgeEntryRequest) -> KnowledgeEntryResponse:
     """Create one knowledge entry."""
-    return KnowledgeEntryResponse(data=knowledge_service.create_knowledge_entry(payload))
+    entry = knowledge_service.create_knowledge_entry(payload)
+    return KnowledgeEntryResponse(data=KnowledgeEntryData.model_validate(entry))
 
 
 def list_entries(
@@ -21,9 +23,11 @@ def list_entries(
 ) -> KnowledgeEntryListResponse:
     """List knowledge entries."""
     entries = knowledge_service.list_knowledge_entries(knowledge_type)
-    return KnowledgeEntryListResponse(data=entries, count=len(entries))
+    response_entries = [KnowledgeEntryData.model_validate(entry) for entry in entries]
+    return KnowledgeEntryListResponse(data=response_entries, count=len(response_entries))
 
 
 def get_entry(entry_id: UUID) -> KnowledgeEntryResponse:
     """Get one knowledge entry."""
-    return KnowledgeEntryResponse(data=knowledge_service.get_knowledge_entry(entry_id))
+    entry = knowledge_service.get_knowledge_entry(entry_id)
+    return KnowledgeEntryResponse(data=KnowledgeEntryData.model_validate(entry))

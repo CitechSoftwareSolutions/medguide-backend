@@ -1,18 +1,39 @@
 # Medical Knowledge Base API
 
 A small FastAPI example using function-based routes, controllers, services, and
-repositories. Pydantic classes are used only where structured data and automatic
-validation are useful.
+repositories. PostgreSQL persistence uses SQLAlchemy 2.x and the Psycopg 3
+driver; Pydantic classes validate API data.
 
 ## Run it
 
 ```powershell
+uv sync
+uv run alembic upgrade head
 uv run fastapi dev main.py
 ```
 
 Open <http://127.0.0.1:8000/docs> to try the generated OpenAPI documentation.
-The application seeds two in-memory entries on startup; data resets when the
-server stops.
+The application seeds two entries on startup if `knowledge_entries` is empty.
+
+## Database and migrations
+
+`src/.env` contains the ignored `DATABASE_URL` used by the application. A Neon
+URL beginning with `postgresql://` is converted internally to the SQLAlchemy
+Psycopg URL format while preserving its SSL settings.
+
+The initial migration is
+`migrations/versions/20260904_0001_create_knowledge_entries.py`. It creates:
+
+- the PostgreSQL `knowledge_type` enum;
+- the `knowledge_entries` table; and
+- a unique title constraint.
+
+Create later migrations after changing ORM models with:
+
+```powershell
+uv run alembic revision --autogenerate -m "describe the change"
+uv run alembic upgrade head
+```
 
 ## API
 
@@ -38,14 +59,14 @@ Example request:
 
 ```text
 src/
-├── config/        # Runtime settings
+├── config/        # Settings and SQLAlchemy engine/session factory
 ├── controllers/   # Functions that coordinate HTTP results
 ├── dto/           # Pydantic request and response schemas
 ├── enums/         # Controlled values, such as knowledge types
 ├── exceptions/    # Domain errors and global exception handlers
 ├── middlewares/   # Request timing middleware
-├── models/        # Pydantic domain models (an ORM model would live here later)
-├── repositories/  # In-memory storage boundary
+├── models/        # SQLAlchemy ORM models
+├── repositories/  # SQLAlchemy persistence operations and transactions
 ├── routes/        # FastAPI endpoint functions
 ├── seeders/       # Development sample data
 ├── services/      # Business use-case functions

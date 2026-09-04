@@ -1,18 +1,34 @@
 """Response DTOs for knowledge-entry endpoints."""
 
-from pydantic import BaseModel
+from datetime import datetime
+from uuid import UUID
 
-from src.models import KnowledgeEntry
+from pydantic import BaseModel, ConfigDict, Field
+
+from src.enums import KnowledgeType
+
+
+class KnowledgeEntryData(BaseModel):
+    """The public, serializable representation of one ORM record."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    title: str
+    summary: str
+    knowledge_type: KnowledgeType
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime
 
 
 class KnowledgeEntryResponse(BaseModel):
     """The standard response body for a single entry."""
 
-    data: KnowledgeEntry
+    data: KnowledgeEntryData
 
 
 class KnowledgeEntryListResponse(BaseModel):
     """The standard response body for a collection of entries."""
 
-    data: list[KnowledgeEntry]
+    data: list[KnowledgeEntryData]
     count: int

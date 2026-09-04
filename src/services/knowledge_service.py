@@ -35,10 +35,7 @@ def list_knowledge_entries(
     knowledge_type: KnowledgeType | None = None,
 ) -> list[KnowledgeEntry]:
     """List entries, optionally limited to one type."""
-    entries = list_all()
-    if knowledge_type is None:
-        return entries
-    return [entry for entry in entries if entry.knowledge_type == knowledge_type]
+    return list_all(knowledge_type)
 
 
 def get_knowledge_entry(entry_id: UUID) -> KnowledgeEntry:

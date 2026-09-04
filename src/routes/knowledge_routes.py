@@ -16,7 +16,9 @@ router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 
 
 @router.post("", response_model=KnowledgeEntryResponse, status_code=status.HTTP_201_CREATED)
-def create_knowledge_entry(payload: CreateKnowledgeEntryRequest) -> KnowledgeEntryResponse:
+def create_knowledge_entry(
+    payload: CreateKnowledgeEntryRequest,
+) -> KnowledgeEntryResponse:
     """Create a medical knowledge entry."""
     return create_entry(payload)
 
@@ -30,6 +32,8 @@ def list_knowledge_entries(
 
 
 @router.get("/{entry_id}", response_model=KnowledgeEntryResponse)
-def get_knowledge_entry(entry_id: UUID) -> KnowledgeEntryResponse:
+def get_knowledge_entry(
+    entry_id: UUID,
+) -> KnowledgeEntryResponse:
     """Get one entry by UUID."""
     return get_entry(entry_id)
