@@ -6,9 +6,21 @@ driver; Pydantic classes validate API data.
 
 ## Run it
 
+Install the project and development test tools:
+
 ```powershell
-uv sync
+uv sync --group dev
+```
+
+Apply the current database schema to Neon:
+
+```powershell
 uv run alembic upgrade head
+```
+
+Start the development server:
+
+```powershell
 uv run fastapi dev main.py
 ```
 
@@ -34,6 +46,20 @@ Create later migrations after changing ORM models with:
 uv run alembic revision --autogenerate -m "describe the change"
 uv run alembic upgrade head
 ```
+
+## Tests
+
+Run the full test suite with:
+
+```powershell
+uv run pytest
+```
+
+The tests use fakes and mocks for repository transactions, so they do not write
+to the configured Neon database. They cover settings, DTO validation, service
+rules, repository transaction handling, controller/route behavior, and global
+exception responses. Database schema changes are validated separately through
+Alembic migrations.
 
 ## API
 
