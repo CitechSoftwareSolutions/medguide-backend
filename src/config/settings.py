@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     session_max_turns: int = 20
     session_ttl_seconds: int = 3600
 
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origin_regex: str = ""
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        """The browser origins allowed to call this API.
+
+        Comma-separated so the deployed frontend's URL can be added through
+        one environment variable without a code change.
+        """
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
     @property
     def sqlalchemy_database_url(self) -> str:
         """Translate a standard PostgreSQL URL to SQLAlchemy's Psycopg driver URL."""
