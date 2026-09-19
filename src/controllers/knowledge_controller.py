@@ -4,18 +4,32 @@ from uuid import UUID
 
 from src.dto import (
     CreateKnowledgeEntryRequest,
+    ImportedEntryData,
+    ImportGuidelineData,
+    ImportGuidelineRequest,
+    ImportGuidelineResponse,
     KnowledgeEntryData,
     KnowledgeEntryListResponse,
     KnowledgeEntryResponse,
 )
 from src.enums import KnowledgeType
-from src.services import knowledge_service
+from src.services import guideline_import_service, knowledge_service
 
 
 def create_entry(payload: CreateKnowledgeEntryRequest) -> KnowledgeEntryResponse:
     """Create one knowledge entry."""
     entry = knowledge_service.create_knowledge_entry(payload)
     return KnowledgeEntryResponse(data=KnowledgeEntryData.model_validate(entry))
+
+
+def import_guideline(payload: ImportGuidelineRequest) -> ImportGuidelineResponse:
+    """Bulk-import a structured guideline document as knowledge entries."""
+    results = guideline_import_service.import_guideline(payload)
+    entries = [ImportedEntryData.model_validate(result) for result in results]
+    total_chunk_count = sum(entry.chunk_count for entry in entries)
+    return ImportGuidelineResponse(
+        data=ImportGuidelineData(entries=entries, total_chunk_count=total_chunk_count)
+    )
 
 
 def list_entries(

@@ -24,3 +24,17 @@ class DuplicateKnowledgeEntryError(ApplicationError):
 
     status_code = 409
     error_code = "duplicate_knowledge_entry"
+
+
+class AgentUnavailableError(ApplicationError):
+    """Raised when the language model cannot be reached or refuses to serve."""
+
+    status_code = 503
+    error_code = "agent_unavailable"
+
+
+class KnowledgeBaseEmptyError(ApplicationError):
+    """Raised when a question arrives before any knowledge has been indexed."""
+
+    status_code = 409
+    error_code = "knowledge_base_empty"

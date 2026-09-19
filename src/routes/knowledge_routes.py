@@ -4,9 +4,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, status
 
-from src.controllers import create_entry, get_entry, list_entries
+from src.controllers import create_entry, get_entry, import_guideline, list_entries
 from src.dto import (
     CreateKnowledgeEntryRequest,
+    ImportGuidelineRequest,
+    ImportGuidelineResponse,
     KnowledgeEntryListResponse,
     KnowledgeEntryResponse,
 )
@@ -21,6 +23,25 @@ def create_knowledge_entry(
 ) -> KnowledgeEntryResponse:
     """Create a medical knowledge entry."""
     return create_entry(payload)
+
+
+@router.post(
+    "/import",
+    response_model=ImportGuidelineResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def import_guideline_document(
+    payload: ImportGuidelineRequest,
+) -> ImportGuidelineResponse:
+    """Bulk-import a structured guideline document as knowledge entries.
+
+    Splits a document into one entry per condition plus one overview entry for
+    its shared workflow, red flags and best practices, then indexes each new
+    one so it is immediately searchable. Re-posting the same document is
+    safe: entries already present by title are reused rather than duplicated,
+    in the knowledge table and in the search index alike.
+    """
+    return import_guideline(payload)
 
 
 @router.get("", response_model=KnowledgeEntryListResponse)

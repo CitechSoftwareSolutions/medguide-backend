@@ -19,6 +19,23 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str
 
+    anthropic_api_key: str = ""
+    agent_model: str = "claude-sonnet-5"
+    agent_max_answer_tokens: int = 8000
+    agent_recursion_limit: int = 40
+
+    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dimensions: int = 384
+
+    vector_store_dir: Path = Path("var/vector_store")
+    chunk_size: int = 500
+    chunk_overlap: int = 80
+    retrieval_top_k: int = 8
+    retrieval_min_score: float = 0.35
+
+    session_max_turns: int = 20
+    session_ttl_seconds: int = 3600
+
     @property
     def sqlalchemy_database_url(self) -> str:
         """Translate a standard PostgreSQL URL to SQLAlchemy's Psycopg driver URL."""

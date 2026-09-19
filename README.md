@@ -25,7 +25,48 @@ uv run fastapi dev main.py
 ```
 
 Open <http://127.0.0.1:8000/docs> to try the generated OpenAPI documentation.
-The application seeds two entries on startup if `knowledge_entries` is empty.
+The application seeds two entries on startup if `knowledge_entries` is empty,
+then loads the embedding model and indexes those entries so the assistant has
+something to search.
+
+> **Run one worker only.** Chat sessions are held in process memory. Under more
+> than one uvicorn worker, consecutive requests for the same session land on
+> different processes at random and conversation memory appears to vanish
+> intermittently. Use `--workers 1` until session memory is moved into
+> PostgreSQL. `fastapi dev` is already single-worker.
+
+## The question-answering assistant
+
+`POST /api/v1/agent/ask` answers a clinical question using only the indexed
+knowledge base. It is built for medical staff: answers keep clinical terminology
+and report dosing and contraindications as the entries state them.
+
+Add `ANTHROPIC_API_KEY` to `src/.env` to enable it. Without a key the endpoint
+returns `503 agent_unavailable` rather than failing at startup.
+
+**Accuracy over fluency.** A graph node audits every draft answer against the
+passages it was built from and rejects unsupported claims, so the assistant
+abstains when the knowledge base does not cover a question instead of answering
+from the model's own medical knowledge. An abstention is reported as
+`"confidence": "abstained"`, and every clinical claim in a real answer carries a
+`[n]` marker resolved in the `citations` array.
+
+Session memory is keyed on `session_id`: send back the value from a previous
+answer to ask a follow-up in the same conversation. Memory lasts for the process
+lifetime and is not persisted.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | _(empty)_ | Enables the assistant |
+| `AGENT_MODEL` | `claude-sonnet-5` | The answering model |
+| `EMBEDDING_MODEL_NAME` | `sentence-transformers/all-MiniLM-L6-v2` | Local embedding model |
+| `VECTOR_STORE_DIR` | `var/vector_store` | Where the FAISS index is persisted |
+| `RETRIEVAL_TOP_K` | `8` | Candidates fetched per search |
+| `RETRIEVAL_MIN_SCORE` | `0.35` | Cosine floor applied before grading |
+| `SESSION_MAX_TURNS` | `20` | History window kept per session |
+| `SESSION_TTL_SECONDS` | `3600` | Idle lifetime before a session is evicted |
 
 ## Database and migrations
 
@@ -61,6 +102,12 @@ rules, repository transaction handling, controller/route behavior, and global
 exception responses. Database schema changes are validated separately through
 Alembic migrations.
 
+No test reaches the Claude API. The model adapter is stubbed throughout, and
+embeddings are replaced with a small deterministic vector space so retrieval
+behaviour can be asserted exactly. The agent tests cover the graph's control
+flow rather than its prose: when it answers, when it retries a search, when it
+rewrites an ungrounded answer, and when it refuses.
+
 ## API
 
 | Method | Endpoint | Purpose |
@@ -69,6 +116,15 @@ Alembic migrations.
 | `GET` | `/api/v1/knowledge` | List entries; optionally use `?knowledge_type=condition` |
 | `GET` | `/api/v1/knowledge/{entry_id}` | Retrieve one entry |
 | `POST` | `/api/v1/knowledge` | Create an entry |
+| `POST` | `/api/v1/agent/ask` | Answer a clinical question from the index |
+| `POST` | `/api/v1/rag/documents` | Index new knowledge, searchable immediately |
+| `DELETE` | `/api/v1/rag/documents/{document_id}` | Remove a document from the index |
+| `POST` | `/api/v1/rag/reindex` | Rebuild the index from `knowledge_entries` |
+| `GET` | `/api/v1/rag/stats` | Report how much knowledge is searchable |
+
+The `/api/v1/rag` write endpoints change what the assistant treats as ground
+truth and are currently unauthenticated. Put them behind an owner-only guard
+before running this anywhere but a development machine.
 
 Example request:
 
@@ -85,6 +141,15 @@ Example request:
 
 ```text
 src/
+├── agent/         # LangGraph orchestration over Claude and the FAISS index
+│   ├── agent.py     # answer_question(): the only entrypoint other layers use
+│   ├── graph.py     # Supervisor graph: routes a request to one capability
+│   ├── state.py     # Typed graph state and the history reducer
+│   ├── llm/         # Claude adapter and the local embedding model
+│   ├── memory/      # Session identity and the conversation checkpointer
+│   ├── nodes/       # Node implementations for both graphs
+│   ├── prompts/     # Byte-stable system prompts (kept stable for caching)
+│   └── tools/       # Capability subgraphs and the routing registry
 ├── config/        # Settings and SQLAlchemy engine/session factory
 ├── controllers/   # Functions that coordinate HTTP results
 ├── dto/           # Pydantic request and response schemas
@@ -92,7 +157,7 @@ src/
 ├── exceptions/    # Domain errors and global exception handlers
 ├── middlewares/   # Request timing middleware
 ├── models/        # SQLAlchemy ORM models
-├── repositories/  # SQLAlchemy persistence operations and transactions
+├── repositories/  # SQLAlchemy persistence, plus the FAISS vector store
 ├── routes/        # FastAPI endpoint functions
 ├── seeders/       # Development sample data
 ├── services/      # Business use-case functions

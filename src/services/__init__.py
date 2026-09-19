@@ -1,6 +1,7 @@
 """Application use cases."""
 
-from . import knowledge_service
+from . import agent_service, guideline_import_service, knowledge_service, rag_service
+from .guideline_import_service import import_guideline
 from .knowledge_service import (
     create_knowledge_entry,
     get_knowledge_entry,
@@ -8,8 +9,12 @@ from .knowledge_service import (
 )
 
 __all__ = [
+    "agent_service",
     "create_knowledge_entry",
     "get_knowledge_entry",
+    "guideline_import_service",
+    "import_guideline",
     "knowledge_service",
     "list_knowledge_entries",
+    "rag_service",
 ]
