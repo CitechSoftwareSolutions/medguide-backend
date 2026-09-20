@@ -23,6 +23,9 @@ def get_embedding_model() -> SentenceTransformer:
     Imported lazily so the heavy Torch import is paid at first use rather than
     at application import time.
     """
+    import os
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     from sentence_transformers import SentenceTransformer
 
     settings = get_settings()
