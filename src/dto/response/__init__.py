@@ -1,35 +1,27 @@
 """Outgoing response schemas."""
 
 from .agent_response import AnswerData, AnswerResponse, CitationData
-from .guideline_import_response import (
-    ImportedEntryData,
-    ImportGuidelineData,
-    ImportGuidelineResponse,
-)
-from .knowledge_response import (
-    KnowledgeEntryData,
-    KnowledgeEntryListResponse,
-    KnowledgeEntryResponse,
-)
 from .rag_response import (
+    DocumentListResponse,
+    DocumentSummaryData,
     IndexDocumentData,
     IndexDocumentResponse,
     RagStatsData,
     RagStatsResponse,
+    UploadDocumentData,
+    UploadDocumentResponse,
 )
 
 __all__ = [
     "AnswerData",
     "AnswerResponse",
     "CitationData",
-    "ImportedEntryData",
-    "ImportGuidelineData",
-    "ImportGuidelineResponse",
+    "DocumentListResponse",
+    "DocumentSummaryData",
     "IndexDocumentData",
     "IndexDocumentResponse",
-    "KnowledgeEntryData",
-    "KnowledgeEntryListResponse",
-    "KnowledgeEntryResponse",
     "RagStatsData",
     "RagStatsResponse",
+    "UploadDocumentData",
+    "UploadDocumentResponse",
 ]

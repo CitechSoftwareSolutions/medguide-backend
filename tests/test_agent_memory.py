@@ -133,6 +133,12 @@ def test_idle_sessions_are_evicted(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sweeping on write keeps the in-memory store bounded."""
     monkeypatch.setenv("SESSION_TTL_SECONDS", "0")
     get_settings.cache_clear()
+    # A clock that always advances: on Windows ``time.monotonic`` ticks about
+    # every 15 ms, so two real calls in a row usually return the same value.
+    # It starts after the real clock so sessions left by earlier tests count as idle.
+    start = session_module.time.monotonic() + 1
+    ticks = iter(range(1_000))
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: start + next(ticks))
     try:
         session_module.touch("first")
         session_module.touch("second")

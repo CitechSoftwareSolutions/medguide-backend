@@ -1,5 +1,5 @@
-"""Development data seeders."""
+"""Startup data seeders."""
 
-from .knowledge_seeder import seed_knowledge_entries
+from .document_seeder import seed_vector_store_from_documents
 
-__all__ = ["seed_knowledge_entries"]
+__all__ = ["seed_vector_store_from_documents"]

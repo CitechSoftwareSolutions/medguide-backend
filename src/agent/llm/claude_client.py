@@ -12,6 +12,9 @@ can trip over one:
   ``output_config.format`` instead.
 * Mid-conversation ``{"role": "system"}`` messages are unsupported on Sonnet 5,
   so all operator instruction stays in the top-level ``system`` field.
+
+Claude Haiku 4.5 predates adaptive thinking and ``output_config.effort``; both
+return HTTP 400 there, so ``_reasoning_params`` omits them for that model.
 """
 
 from __future__ import annotations
@@ -47,6 +50,20 @@ def get_client() -> anthropic.AsyncAnthropic:
         max_retries=3,
         timeout=60.0,
     )
+
+
+def _supports_adaptive_thinking(model: str) -> bool:
+    """Return whether ``model`` accepts adaptive thinking and ``effort``."""
+    return not model.startswith("claude-haiku-4-5")
+
+
+def _reasoning_params(
+    model: str, *, thinking: dict[str, Any], effort: str
+) -> dict[str, Any]:
+    """Return the thinking and effort arguments ``model`` accepts."""
+    if _supports_adaptive_thinking(model):
+        return {"thinking": thinking, "output_config": {"effort": effort}}
+    return {}
 
 
 def _cached_system(system: str) -> list[dict[str, Any]]:
@@ -135,8 +152,9 @@ async def complete_text(
             max_tokens=max_tokens or settings.agent_max_answer_tokens,
             system=_cached_system(system),
             messages=messages,
-            thinking={"type": "adaptive"},
-            output_config={"effort": effort},
+            **_reasoning_params(
+                settings.agent_model, thinking={"type": "adaptive"}, effort=effort
+            ),
         ) as stream:
             message = await stream.get_final_message()
     except Exception as exc:  # narrowed and re-raised by _translate
@@ -176,20 +194,24 @@ async def complete_structured(
     """
     settings = get_settings()
     client = get_client()
+    params = _reasoning_params(
+        settings.agent_model, thinking={"type": "disabled"}, effort=effort
+    )
+    output_config = {
+        **params.pop("output_config", {}),
+        "format": {
+            "type": "json_schema",
+            "schema": schema.model_json_schema(),
+        },
+    }
     try:
         message = await client.messages.create(
             model=settings.agent_model,
             max_tokens=max_tokens,
             system=_cached_system(system),
             messages=messages,
-            thinking={"type": "disabled"},
-            output_config={
-                "effort": effort,
-                "format": {
-                    "type": "json_schema",
-                    "schema": schema.model_json_schema(),
-                },
-            },
+            output_config=output_config,
+            **params,
         )
     except Exception as exc:  # narrowed and re-raised by _translate
         raise _translate(exc, label) from exc

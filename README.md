@@ -1,8 +1,10 @@
 # Medical Knowledge Base API
 
-A small FastAPI example using function-based routes, controllers, services, and
-repositories. PostgreSQL persistence uses SQLAlchemy 2.x and the Psycopg 3
-driver; Pydantic classes validate API data.
+A FastAPI service that answers clinical questions from guideline PDFs. The PDFs
+are embedded with `all-MiniLM-L6-v2` and stored in a local FAISS index, which is
+the only data store: there is no database to provision or migrate. Routes,
+controllers, services and repositories are plain functions; Pydantic classes
+validate API data.
 
 ## Run it
 
@@ -12,12 +14,6 @@ Install the project and development test tools:
 uv sync --group dev
 ```
 
-Apply the current database schema to Neon:
-
-```powershell
-uv run alembic upgrade head
-```
-
 Start the development server:
 
 ```powershell
@@ -25,15 +21,20 @@ uv run fastapi dev main.py
 ```
 
 Open <http://127.0.0.1:8000/docs> to try the generated OpenAPI documentation.
-The application seeds two entries on startup if `knowledge_entries` is empty,
-then loads the embedding model and indexes those entries so the assistant has
-something to search.
+On startup the application loads the embedding model and indexes every PDF in
+`src/data` into the FAISS vector store so the assistant has something to search.
+To add knowledge, drop a PDF into `src/data` and restart. Files are tracked by a
+hash of their content, so unchanged PDFs are not re-embedded, edited ones are
+re-indexed, and deleted ones are removed from the index. Scanned PDFs without a
+text layer are skipped with a warning.
 
 > **Run one worker only.** Chat sessions are held in process memory. Under more
 > than one uvicorn worker, consecutive requests for the same session land on
 > different processes at random and conversation memory appears to vanish
 > intermittently. Use `--workers 1` until session memory is moved into
-> PostgreSQL. `fastapi dev` is already single-worker.
+> a shared store. `fastapi dev` is already single-worker. The FAISS index is
+> also held in process memory, so a second worker would not see uploads made
+> through the first.
 
 ## The question-answering assistant
 
@@ -63,30 +64,12 @@ lifetime and is not persisted.
 | `AGENT_MODEL` | `claude-sonnet-5` | The answering model |
 | `EMBEDDING_MODEL_NAME` | `sentence-transformers/all-MiniLM-L6-v2` | Local embedding model |
 | `VECTOR_STORE_DIR` | `var/vector_store` | Where the FAISS index is persisted |
+| `DOCUMENTS_DIR` | `src/data` | PDFs indexed into the vector store on startup |
+| `MAX_UPLOAD_BYTES` | `20971520` | Largest accepted PDF upload (20 MB) |
 | `RETRIEVAL_TOP_K` | `8` | Candidates fetched per search |
 | `RETRIEVAL_MIN_SCORE` | `0.35` | Cosine floor applied before grading |
 | `SESSION_MAX_TURNS` | `20` | History window kept per session |
 | `SESSION_TTL_SECONDS` | `3600` | Idle lifetime before a session is evicted |
-
-## Database and migrations
-
-`src/.env` contains the ignored `DATABASE_URL` used by the application. A Neon
-URL beginning with `postgresql://` is converted internally to the SQLAlchemy
-Psycopg URL format while preserving its SSL settings.
-
-The initial migration is
-`migrations/versions/20260904_0001_create_knowledge_entries.py`. It creates:
-
-- the PostgreSQL `knowledge_type` enum;
-- the `knowledge_entries` table; and
-- a unique title constraint.
-
-Create later migrations after changing ORM models with:
-
-```powershell
-uv run alembic revision --autogenerate -m "describe the change"
-uv run alembic upgrade head
-```
 
 ## Tests
 
@@ -96,11 +79,10 @@ Run the full test suite with:
 uv run pytest
 ```
 
-The tests use fakes and mocks for repository transactions, so they do not write
-to the configured Neon database. They cover settings, DTO validation, service
-rules, repository transaction handling, controller/route behavior, and global
-exception responses. Database schema changes are validated separately through
-Alembic migrations.
+Each test that touches the vector store gets its own temporary FAISS directory,
+so the suite never modifies `var/vector_store` or `src/data`. The tests cover
+settings, DTO validation, PDF extraction and syncing, uploads, the RAG routes,
+and global exception responses.
 
 No test reaches the Claude API. The model adapter is stubbed throughout, and
 embeddings are replaced with a small deterministic vector space so retrieval
@@ -113,28 +95,22 @@ rewrites an ungrounded answer, and when it refuses.
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Application health check |
-| `GET` | `/api/v1/knowledge` | List entries; optionally use `?knowledge_type=condition` |
-| `GET` | `/api/v1/knowledge/{entry_id}` | Retrieve one entry |
-| `POST` | `/api/v1/knowledge` | Create an entry |
 | `POST` | `/api/v1/agent/ask` | Answer a clinical question from the index |
-| `POST` | `/api/v1/rag/documents` | Index new knowledge, searchable immediately |
-| `DELETE` | `/api/v1/rag/documents/{document_id}` | Remove a document from the index |
-| `POST` | `/api/v1/rag/reindex` | Rebuild the index from `knowledge_entries` |
+| `GET` | `/api/v1/rag/documents` | List every document in the vector store |
+| `POST` | `/api/v1/rag/documents` | Index plain text, searchable immediately |
+| `POST` | `/api/v1/rag/documents/upload` | Upload a PDF (multipart field `file`); saved to `src/data` and indexed. A name already in use gets a `_2`, `_3`... suffix; nothing is replaced |
+| `DELETE` | `/api/v1/rag/documents/{document_id}` | Remove a document from the index (and its PDF file, for PDFs) |
+| `POST` | `/api/v1/rag/reindex` | Rebuild the index from the PDFs in `src/data` |
 | `GET` | `/api/v1/rag/stats` | Report how much knowledge is searchable |
 
 The `/api/v1/rag` write endpoints change what the assistant treats as ground
 truth and are currently unauthenticated. Put them behind an owner-only guard
 before running this anywhere but a development machine.
 
-Example request:
+Example upload:
 
-```json
-{
-  "title": "Migraine",
-  "summary": "A recurrent headache disorder that can cause throbbing pain.",
-  "knowledge_type": "condition",
-  "tags": ["neurology", "headache"]
-}
+```powershell
+curl.exe -F "file=@Asthma_Guideline.pdf" http://127.0.0.1:8000/api/v1/rag/documents/upload
 ```
 
 ## Structure
@@ -150,16 +126,15 @@ src/
 │   ├── nodes/       # Node implementations for both graphs
 │   ├── prompts/     # Byte-stable system prompts (kept stable for caching)
 │   └── tools/       # Capability subgraphs and the routing registry
-├── config/        # Settings and SQLAlchemy engine/session factory
+├── config/        # Settings read from the environment and .env
 ├── controllers/   # Functions that coordinate HTTP results
 ├── dto/           # Pydantic request and response schemas
-├── enums/         # Controlled values, such as knowledge types
 ├── exceptions/    # Domain errors and global exception handlers
 ├── middlewares/   # Request timing middleware
-├── models/        # SQLAlchemy ORM models
-├── repositories/  # SQLAlchemy persistence, plus the FAISS vector store
+├── repositories/  # The FAISS vector store and its metadata sidecar
 ├── routes/        # FastAPI endpoint functions
-├── seeders/       # Development sample data
+├── data/          # PDF guidelines indexed into the vector store
+├── seeders/       # Startup loading of src/data into the vector store
 ├── services/      # Business use-case functions
 ├── utils/         # Small general helpers
 └── validations/   # Reusable domain validation rules
@@ -173,10 +148,10 @@ application. Do not add them to generated folders such as `__pycache__`.
 ## Validation and errors
 
 Pydantic, included with FastAPI, is the right validation package for API request
-and response schemas. `CreateKnowledgeEntryRequest` handles field shapes, enum
-values, and OpenAPI documentation; the `validations/` functions handle reusable
+and response schemas. `IndexDocumentRequest` handles field shapes and OpenAPI
+documentation; the `validations/` functions handle reusable
 domain rules such as trimming text and deduplicating tags.
 
-Expected domain errors (not found and duplicate title), malformed requests, and
+Expected domain errors (such as an invalid or duplicate PDF), malformed requests, and
 unexpected failures all pass through the global handlers in
 `src/exceptions/handlers.py` and return a consistent JSON error body.

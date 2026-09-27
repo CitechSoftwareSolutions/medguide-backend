@@ -12,18 +12,25 @@ class ApplicationError(Exception):
         super().__init__(message)
 
 
-class KnowledgeEntryNotFoundError(ApplicationError):
-    """Raised when an entry identifier does not match an entry."""
+class InvalidDocumentError(ApplicationError):
+    """Raised when an uploaded file is not a usable PDF."""
 
-    status_code = 404
-    error_code = "knowledge_entry_not_found"
+    status_code = 422
+    error_code = "invalid_document"
 
 
-class DuplicateKnowledgeEntryError(ApplicationError):
-    """Raised when a title already exists in the knowledge base."""
+class DuplicateDocumentError(ApplicationError):
+    """Raised when an uploaded PDF is already in the knowledge base."""
 
     status_code = 409
-    error_code = "duplicate_knowledge_entry"
+    error_code = "duplicate_document"
+
+
+class DocumentTooLargeError(ApplicationError):
+    """Raised when an upload exceeds the configured size limit."""
+
+    status_code = 413
+    error_code = "document_too_large"
 
 
 class AgentUnavailableError(ApplicationError):

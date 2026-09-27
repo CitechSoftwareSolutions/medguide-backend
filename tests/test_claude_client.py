@@ -51,9 +51,15 @@ class StubStream:
         return self._message
 
 
-def install_stub_client(monkeypatch: pytest.MonkeyPatch, message: StubMessage) -> dict:
+def install_stub_client(
+    monkeypatch: pytest.MonkeyPatch,
+    message: StubMessage,
+    model: str = "claude-sonnet-5",
+) -> dict:
     """Replace the SDK client and capture the request keyword arguments."""
     captured: dict = {}
+    settings = get_settings().model_copy(update={"agent_model": model})
+    monkeypatch.setattr(claude_client, "get_settings", lambda: settings)
 
     class StubMessages:
         def stream(self, **kwargs):
@@ -87,7 +93,51 @@ async def test_text_request_omits_parameters_sonnet_five_rejects(
         assert rejected not in captured
     assert captured["thinking"] == {"type": "adaptive"}
     assert "budget_tokens" not in captured["thinking"]
-    assert captured["model"] == get_settings().agent_model
+    assert captured["model"] == "claude-sonnet-5"
+
+
+async def test_haiku_requests_omit_adaptive_thinking_and_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Haiku 4.5 rejects adaptive thinking and effort with an HTTP 400."""
+    captured = install_stub_client(
+        monkeypatch, StubMessage("An answer."), model="claude-haiku-4-5-20251001"
+    )
+
+    await claude_client.complete_text(
+        system="You are a clinical assistant.",
+        messages=[{"role": "user", "content": "Question?"}],
+        label="test",
+    )
+
+    assert "thinking" not in captured
+    assert "output_config" not in captured
+
+
+async def test_haiku_structured_request_keeps_the_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping effort on Haiku must not drop the output format."""
+    from pydantic import BaseModel, ConfigDict
+
+    class Verdict(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        keep: bool
+
+    captured = install_stub_client(
+        monkeypatch, StubMessage('{"keep": true}'), model="claude-haiku-4-5-20251001"
+    )
+
+    await claude_client.complete_structured(
+        system="Judge this.",
+        messages=[{"role": "user", "content": "Passage."}],
+        schema=Verdict,
+        label="test",
+    )
+
+    assert "thinking" not in captured
+    assert captured["output_config"].keys() == {"format"}
 
 
 async def test_text_request_marks_the_system_prompt_cacheable(

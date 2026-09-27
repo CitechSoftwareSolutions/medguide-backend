@@ -1,20 +1,18 @@
 [project]
 name = "medical-knowledge-base-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Question answering over clinical guideline PDFs indexed in FAISS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "alembic>=1.14",
     "anthropic",
     "faiss-cpu",
     "fastapi[standard]>=0.141.1",
     "langgraph",
     "numpy",
-    "psycopg[binary]>=3.2",
     "pydantic-settings>=2.7",
+    "pypdf>=6.19.0",
     "sentence-transformers",
-    "sqlalchemy>=2.0",
 ]
 
 [dependency-groups]

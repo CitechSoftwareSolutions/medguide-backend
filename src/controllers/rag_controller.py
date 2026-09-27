@@ -1,13 +1,18 @@
 """Functions that shape indexing results into API response DTOs."""
 
 from src.dto import (
+    DocumentListResponse,
+    DocumentSummaryData,
     IndexDocumentData,
     IndexDocumentRequest,
     IndexDocumentResponse,
     RagStatsData,
     RagStatsResponse,
+    UploadDocumentData,
+    UploadDocumentResponse,
 )
-from src.services import rag_service
+from src.repositories import vector_repository
+from src.services import document_service, rag_service
 
 
 def index_document(payload: IndexDocumentRequest) -> IndexDocumentResponse:
@@ -21,15 +26,30 @@ def index_document(payload: IndexDocumentRequest) -> IndexDocumentResponse:
     )
 
 
+def upload_document(file_name: str, content: bytes) -> UploadDocumentResponse:
+    """Save an uploaded PDF into the documents directory and index it."""
+    result = document_service.upload_pdf(file_name, content)
+    return UploadDocumentResponse(data=UploadDocumentData.model_validate(result))
+
+
+def list_documents() -> DocumentListResponse:
+    """List every document in the vector store."""
+    documents = [
+        DocumentSummaryData.model_validate(item)
+        for item in vector_repository.list_documents()
+    ]
+    return DocumentListResponse(data=documents, count=len(documents))
+
+
 def remove_document(document_id: str) -> RagStatsResponse:
-    """Remove one document's chunks and report the resulting index size."""
-    rag_service.remove_document(document_id)
+    """Remove one document's chunks (and PDF file) and report the index size."""
+    document_service.remove_document(document_id)
     return stats()
 
 
 def reindex() -> RagStatsResponse:
-    """Rebuild the index from the persisted knowledge entries."""
-    rag_service.reindex_from_knowledge_entries()
+    """Rebuild the index from the PDFs in the documents directory."""
+    document_service.rebuild_from_documents_directory()
     return stats()
 
 
