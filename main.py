@@ -10,15 +10,14 @@ from src.config import get_settings
 from src.exceptions import register_exception_handlers
 from src.middlewares import add_request_timing
 from src.repositories import vector_repository
-from src.routes import agent_router, knowledge_router, rag_router
-from src.seeders import seed_knowledge_entries
-from src.services import rag_service
+from src.routes import agent_router, rag_router
+from src.seeders import seed_vector_store_from_documents
 
 logger = logging.getLogger(__name__)
 
 
 def _prepare_knowledge_index() -> None:
-    """Seed the sample data and make the knowledge base searchable.
+    """Index the PDFs in ``src/data`` and make the knowledge base searchable.
 
     A failure here is logged and tolerated rather than aborting startup.
     Loading the embedding model downloads it on first run, so this step depends
@@ -28,12 +27,9 @@ def _prepare_knowledge_index() -> None:
     through the usual error envelope while everything else keeps serving.
     """
     try:
-        seed_knowledge_entries()
         warm_embedding_model()
         vector_repository.load_or_create()
-        if rag_service.stats()["chunk_count"] == 0:
-            logger.info("Vector store is empty; indexing the seeded knowledge entries")
-            rag_service.reindex_from_knowledge_entries()
+        seed_vector_store_from_documents()
         logger.info("Knowledge index ready")
     except Exception:
         logger.exception(
@@ -67,7 +63,7 @@ settings = get_settings()
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="A function-based sample API for medical knowledge entries.",
+    description="Question answering over clinical guideline PDFs indexed in FAISS.",
     lifespan=lifespan,
 )
 app.middleware("http")(add_request_timing)
@@ -88,7 +84,6 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
-app.include_router(knowledge_router)
 app.include_router(rag_router)
 app.include_router(agent_router)
 

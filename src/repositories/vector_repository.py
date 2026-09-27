@@ -183,6 +183,32 @@ def search(vector: np.ndarray, top_k: int) -> list[tuple[ChunkRecord, float]]:
         return results
 
 
+def document_ids() -> set[str]:
+    """Return the identifier of every indexed document."""
+    with _lock:
+        _ensure_loaded_unlocked()
+        return {record["document_id"] for record in _metadata.values()}
+
+
+def list_documents() -> list[dict[str, Any]]:
+    """Summarize each indexed document: identifier, title, tags and chunk count."""
+    with _lock:
+        _ensure_loaded_unlocked()
+        documents: dict[str, dict[str, Any]] = {}
+        for record in _metadata.values():
+            summary = documents.setdefault(
+                record["document_id"],
+                {
+                    "document_id": record["document_id"],
+                    "title": record["title"],
+                    "tags": list(record["tags"]),
+                    "chunk_count": 0,
+                },
+            )
+            summary["chunk_count"] += 1
+    return sorted(documents.values(), key=lambda item: (item["title"].lower(), item["document_id"]))
+
+
 def stats() -> dict[str, int]:
     """Report how much knowledge is currently searchable."""
     with _lock:

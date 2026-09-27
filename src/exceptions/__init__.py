@@ -3,17 +3,19 @@
 from .errors import (
     AgentUnavailableError,
     ApplicationError,
-    DuplicateKnowledgeEntryError,
+    DocumentTooLargeError,
+    DuplicateDocumentError,
+    InvalidDocumentError,
     KnowledgeBaseEmptyError,
-    KnowledgeEntryNotFoundError,
 )
 from .handlers import register_exception_handlers
 
 __all__ = [
     "AgentUnavailableError",
     "ApplicationError",
-    "DuplicateKnowledgeEntryError",
+    "DocumentTooLargeError",
+    "DuplicateDocumentError",
+    "InvalidDocumentError",
     "KnowledgeBaseEmptyError",
-    "KnowledgeEntryNotFoundError",
     "register_exception_handlers",
 ]

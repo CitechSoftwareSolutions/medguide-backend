@@ -8,18 +8,21 @@ import re
 from src.agent.llm import encode_documents, encode_query
 from src.agent.state import RetrievedChunk
 from src.config import get_settings
-from src.repositories import list_all, vector_repository
+from src.repositories import vector_repository
 from src.repositories.vector_repository import ChunkRecord
 from src.utils import new_identifier
 
 logger = logging.getLogger(__name__)
 
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+# Also split before a bullet: list items extracted from PDFs often carry no
+# terminal punctuation and would otherwise merge into one oversized "sentence".
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|\s+(?=• )")
 
 
 def _split_sentences(text: str) -> list[str]:
     """Split prose into sentences, tolerating text with no terminal punctuation."""
-    return [part.strip() for part in _SENTENCE_BOUNDARY.split(text.strip()) if part.strip()]
+    parts = (part.strip() for part in _SENTENCE_BOUNDARY.split(text.strip()))
+    return [part for part in parts if part and part != "•"]
 
 
 def _overlap_tail(text: str, overlap: int) -> str:
@@ -69,9 +72,18 @@ def chunk_text(title: str, text: str) -> list[str]:
     return chunks
 
 
-def index_document(title: str, text: str, tags: list[str] | None = None) -> dict[str, object]:
-    """Index one document and return its identifier and chunk count."""
-    document_id = str(new_identifier())
+def index_document(
+    title: str,
+    text: str,
+    tags: list[str] | None = None,
+    *,
+    document_id: str | None = None,
+) -> dict[str, object]:
+    """Index one document and return its identifier and chunk count.
+
+    ``document_id`` is generated unless the caller needs a stable one.
+    """
+    document_id = document_id or str(new_identifier())
     pieces = chunk_text(title, text)
     if not pieces:
         return {"document_id": document_id, "chunk_count": 0}
@@ -125,19 +137,3 @@ def stats() -> dict[str, int]:
     """Report how much knowledge is searchable."""
     return vector_repository.stats()
 
-
-def reindex_from_knowledge_entries() -> dict[str, int]:
-    """Rebuild the index from the persisted knowledge entries.
-
-    Reuses the existing ``list_all`` repository function so the seeded entries
-    become searchable without duplicating any query logic.
-    """
-    vector_repository.reset()
-    documents = 0
-    chunks = 0
-    for entry in list_all():
-        result = index_document(entry.title, entry.summary, list(entry.tags or []))
-        documents += 1
-        chunks += int(result["chunk_count"])
-    logger.info("Reindexed %d documents into %d chunks", documents, chunks)
-    return {"document_count": documents, "chunk_count": chunks}

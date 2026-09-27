@@ -2,24 +2,20 @@
 
 from .request import (
     AskQuestionRequest,
-    CreateKnowledgeEntryRequest,
-    ImportGuidelineRequest,
     IndexDocumentRequest,
 )
 from .response import (
     AnswerData,
     AnswerResponse,
     CitationData,
-    ImportedEntryData,
-    ImportGuidelineData,
-    ImportGuidelineResponse,
+    DocumentListResponse,
+    DocumentSummaryData,
     IndexDocumentData,
     IndexDocumentResponse,
-    KnowledgeEntryData,
-    KnowledgeEntryListResponse,
-    KnowledgeEntryResponse,
     RagStatsData,
     RagStatsResponse,
+    UploadDocumentData,
+    UploadDocumentResponse,
 )
 
 __all__ = [
@@ -27,17 +23,13 @@ __all__ = [
     "AnswerResponse",
     "AskQuestionRequest",
     "CitationData",
-    "CreateKnowledgeEntryRequest",
-    "ImportedEntryData",
-    "ImportGuidelineData",
-    "ImportGuidelineRequest",
-    "ImportGuidelineResponse",
+    "DocumentListResponse",
+    "DocumentSummaryData",
     "IndexDocumentData",
     "IndexDocumentRequest",
     "IndexDocumentResponse",
-    "KnowledgeEntryData",
-    "KnowledgeEntryListResponse",
-    "KnowledgeEntryResponse",
     "RagStatsData",
     "RagStatsResponse",
+    "UploadDocumentData",
+    "UploadDocumentResponse",
 ]
