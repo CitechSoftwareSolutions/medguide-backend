@@ -5,7 +5,7 @@ description = "Question answering over clinical guideline PDFs indexed in FAISS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "anthropic",
+    "httpx",
     "faiss-cpu",
     "fastapi[standard]>=0.141.1",
     "langgraph",

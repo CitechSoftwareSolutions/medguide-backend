@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.agent.llm import warm_embedding_model
+from src.agent.llm import warm_chat_model, warm_embedding_model
 from src.config import get_settings
 from src.exceptions import register_exception_handlers
 from src.middlewares import add_request_timing
@@ -30,6 +30,7 @@ def _prepare_knowledge_index() -> None:
         warm_embedding_model()
         vector_repository.load_or_create()
         seed_vector_store_from_documents()
+        warm_chat_model()
         logger.info("Knowledge index ready")
     except Exception:
         logger.exception(

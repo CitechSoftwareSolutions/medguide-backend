@@ -1,4 +1,4 @@
-"""The AI layer: LangGraph orchestration over Claude and a local FAISS index.
+"""The AI layer: LangGraph orchestration over MedGemma (via Ollama) and a local FAISS index.
 
 Deliberately free of re-exports. ``src.services.rag_service`` imports
 ``src.agent.llm``, while the graph modules import ``src.services``; eagerly

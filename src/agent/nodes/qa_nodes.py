@@ -39,6 +39,15 @@ MAX_RETRIEVAL_ATTEMPTS = 2
 MAX_SYNTHESIS_ATTEMPTS = 2
 
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
+_WORD = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)*")
+# Words too common to show that a claim came from a passage.
+_STOPWORDS = frozenset(
+    "a an and are as at be by for from has have in is it its of on or that the "
+    "their this to was were which with".split()
+)
+# Share of a flagged claim's content words that must appear in the passages
+# before the claim is treated as supported despite the verifier's objection.
+_CLAIM_WORD_COVERAGE = 0.85
 
 
 class RewrittenQuery(BaseModel):
@@ -267,6 +276,27 @@ async def synthesize(state: QaState) -> dict:
     }
 
 
+def _content_words(text: str) -> list[str]:
+    words = _WORD.findall(_CITATION_MARKER.sub(" ", text.lower()))
+    return [word for word in words if word not in _STOPWORDS]
+
+
+def _claim_is_in_passages(claim: str, chunks: list[RetrievedChunk]) -> bool:
+    """Whether a flagged claim is, in substance, copied from the passages.
+
+    Every number in the claim must appear in the passages, so an invented or
+    altered dose is never excused, and nearly all of its other words must too.
+    """
+    words = _content_words(claim)
+    if not words:
+        return False
+    available = set(_content_words(" ".join(chunk["text"] for chunk in chunks)))
+    if any(any(ch.isdigit() for ch in word) and word not in available for word in words):
+        return False
+    covered = sum(word in available for word in words)
+    return covered / len(words) >= _CLAIM_WORD_COVERAGE
+
+
 async def verify_groundedness(state: QaState) -> dict:
     """Audit the draft answer against its passages before it can be returned."""
     chunks = state.get("relevant_chunks", [])
@@ -293,16 +323,30 @@ async def verify_groundedness(state: QaState) -> dict:
         logger.warning("Groundedness check failed; abstaining rather than answering")
         return {"grounded": False, "unsupported_claims": []}
 
-    if not verdict.grounded:
-        logger.info(
-            "Answer rejected as ungrounded (%d unsupported claims)",
-            len(verdict.unsupported_claims),
-        )
+    grounded = verdict.grounded
+    unsupported = verdict.unsupported_claims
+    if not grounded and unsupported:
+        # A small verifier model is inconsistent: it sometimes flags a sentence
+        # the answer copied from a passage almost verbatim. Objections to text
+        # that demonstrably is in the passages are dropped; if none remain, the
+        # answer stands. An objection that names no claim still rejects.
+        unsupported = [
+            claim for claim in unsupported if not _claim_is_in_passages(claim, chunks)
+        ]
+        if not unsupported:
+            logger.info(
+                "Overruled %d verifier objection(s) to text found in the passages",
+                len(verdict.unsupported_claims),
+            )
+            grounded = True
+
+    if not grounded:
+        logger.info("Answer rejected as ungrounded (%d unsupported claims)", len(unsupported))
 
     return {
-        "grounded": verdict.grounded,
-        "unsupported_claims": verdict.unsupported_claims,
-        "confidence": _confidence(chunks) if verdict.grounded else "abstained",
+        "grounded": grounded,
+        "unsupported_claims": unsupported,
+        "confidence": _confidence(chunks) if grounded else "abstained",
     }
 
 

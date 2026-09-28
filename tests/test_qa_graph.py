@@ -272,3 +272,46 @@ async def test_confidence_tracks_match_strength(
     state = await run()
 
     assert state["confidence"] == expected
+
+
+async def test_verifier_objection_to_passage_text_is_overruled(
+    stub: StubModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A claim copied from a passage stands even when the verifier flags it."""
+    stub.grounded = False
+    stub.unsupported = ["Migraine is managed with supportive care [1]."]
+    set_retrieval(monkeypatch, [make_chunk()])
+
+    state = await run()
+
+    assert state.get("abstained") is not True
+    assert state["answer"] == stub.answer
+    assert stub.calls.count("synthesize") == 1
+
+
+async def test_verifier_objection_to_an_altered_dose_stands(
+    stub: StubModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Matching words do not excuse a number the passages never state."""
+    chunk = make_chunk()
+    chunk["text"] = "Propranolol 40-320 mg/day in divided doses."
+    stub.grounded = False
+    stub.unsupported = ["Propranolol 40-360 mg/day in divided doses."]
+    set_retrieval(monkeypatch, [chunk])
+
+    state = await run()
+
+    assert state["abstained"] is True
+
+
+async def test_verifier_rejection_without_named_claims_still_rejects(
+    stub: StubModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing to check against the passages means nothing to overrule."""
+    stub.grounded = False
+    stub.unsupported = []
+    set_retrieval(monkeypatch, [make_chunk()])
+
+    state = await run()
+
+    assert state["abstained"] is True

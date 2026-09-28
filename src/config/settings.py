@@ -18,9 +18,13 @@ class Settings(BaseSettings):
     app_name: str = "Medical Knowledge Base API"
     environment: str = "development"
 
-    anthropic_api_key: str = ""
-    agent_model: str = "claude-sonnet-5"
-    agent_max_answer_tokens: int = 8000
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "medgemma1.5:4b"
+    ollama_num_ctx: int = 8192
+    ollama_timeout_seconds: float = 300.0
+    ollama_keep_alive: str = "30m"
+    # Includes MedGemma's thinking block, which precedes the answer.
+    agent_max_answer_tokens: int = 2048
     agent_recursion_limit: int = 40
 
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
