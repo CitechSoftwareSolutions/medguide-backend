@@ -1,9 +1,11 @@
-"""The AI layer: LangGraph orchestration over MedGemma (via Ollama) and a local FAISS index.
+"""The agent: LangGraph orchestration over MedGemma (via Ollama).
 
-Deliberately free of re-exports. ``src.services.rag_service`` imports
-``src.agent.llm``, while the graph modules import ``src.services``; eagerly
-pulling the graph in here would close that loop into a circular import. Import
-what you need directly::
+* ``supervisor/``   routes each request to a capability or declines it
+* ``knowledge_qa/`` the capability that runs Tool 01 and Tool 02
+* ``memory/``       chat session identity and checkpoints
+* ``agent.py``      the entrypoint; ``routes.py`` exposes it over HTTP
 
-    from src.agent.agent import answer_question
+Deliberately free of re-exports: the tools import ``src.agent.state``, and the
+graphs import the tools, so eager imports here would create a cycle. Import
+what you need directly, for example ``from src.agent.agent import answer_question``.
 """

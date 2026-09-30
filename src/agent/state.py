@@ -2,7 +2,8 @@
 
 from typing import Annotated, Literal, NotRequired, TypedDict
 
-from src.config import get_settings
+from src.shared.config import get_settings
+from src.shared.indexing import RetrievedChunk
 
 Role = Literal["user", "assistant"]
 Confidence = Literal["high", "medium", "low", "abstained"]
@@ -15,16 +16,6 @@ class Turn(TypedDict):
     content: str
 
 
-class RetrievedChunk(TypedDict):
-    """A knowledge chunk returned by vector search."""
-
-    chunk_id: str
-    document_id: str
-    title: str
-    text: str
-    score: float
-
-
 class Citation(TypedDict):
     """The provenance of one claim in a synthesized answer."""
 
@@ -33,6 +24,40 @@ class Citation(TypedDict):
     document_id: str
     title: str
     score: float
+
+
+NiceStatus = Literal["consistent", "conflicts", "not_covered", "unavailable", "not_run"]
+
+
+class NiceConflict(TypedDict):
+    """One claim in the answer that NICE guidance disagrees with."""
+
+    claim: str
+    nice_position: str
+    # Markers into the NICE passages, resolved in NiceValidation.citations.
+    markers: list[int]
+
+
+class NiceValidation(TypedDict):
+    """The result of checking an answer against NICE guidance (tool 02).
+
+    It is reported next to the answer and never changes it.
+    """
+
+    status: NiceStatus
+    summary: str
+    conflicts: list[NiceConflict]
+    citations: list[Citation]
+
+
+def nice_validation(status: NiceStatus, summary: str) -> NiceValidation:
+    """Build a result that carries no conflicts or citations."""
+    return NiceValidation(status=status, summary=summary, conflicts=[], citations=[])
+
+
+def nice_not_run() -> NiceValidation:
+    """The result for a request that produced no answer to check."""
+    return nice_validation("not_run", "No answer was given, so nothing was checked against NICE.")
 
 
 def append_turns(existing: list[Turn] | None, incoming: list[Turn]) -> list[Turn]:
@@ -57,6 +82,7 @@ class SupervisorState(TypedDict):
     answer: NotRequired[str]
     citations: NotRequired[list[Citation]]
     confidence: NotRequired[Confidence]
+    nice_validation: NotRequired[NiceValidation]
 
 
 class QaState(TypedDict):
@@ -67,6 +93,11 @@ class QaState(TypedDict):
     cross the subgraph boundary without an explicit adapter. ``history`` carries
     no reducer here: the subgraph only reads it, and declaring the reducer twice
     would append the same turns at both levels.
+
+    ``chunks`` (tool 01) and ``nice_chunks`` (tool 02) are written by different
+    nodes, which is what lets the two retrievers run in the same step.
+    ``nice_chunks`` is read only by ``validate_against_nice``; no node that
+    writes the answer ever sees it.
     """
 
     session_id: str
@@ -74,6 +105,9 @@ class QaState(TypedDict):
     history: list[Turn]
     search_query: NotRequired[str]
     chunks: NotRequired[list[RetrievedChunk]]
+    nice_chunks: NotRequired[list[RetrievedChunk]]
+    nice_search_failed: NotRequired[bool]
+    nice_validation: NotRequired[NiceValidation]
     relevant_chunks: NotRequired[list[RetrievedChunk]]
     answer: NotRequired[str]
     citations: NotRequired[list[Citation]]

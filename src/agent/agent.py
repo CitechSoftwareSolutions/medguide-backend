@@ -1,8 +1,7 @@
 """The public entrypoint to the agent.
 
-Everything outside ``src/agent`` goes through :func:`answer_question`, so the
-graph, the model adapter and the memory backend all stay replaceable without
-touching the service, controller or route layers.
+The route calls :func:`answer_clinical_question`; everything else about the
+agent (graphs, model adapter, memory) stays replaceable behind it.
 """
 
 from __future__ import annotations
@@ -11,9 +10,11 @@ import logging
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from src.agent.graph import get_supervisor_graph
 from src.agent.memory import resolve_session_id, session_config, touch
-from src.agent.state import Citation, Confidence
+from src.agent.state import Citation, Confidence, NiceValidation, nice_not_run
+from src.agent.supervisor.graph import get_supervisor_graph
+from src.shared.errors import KnowledgeBaseEmptyError
+from src.tools.tool_01_knowledge_base import service as knowledge_base
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,24 @@ class AgentAnswer:
     citations: list[Citation] = field(default_factory=list)
     confidence: Confidence = "abstained"
     route: str = ""
+    nice_validation: NiceValidation = field(default_factory=nice_not_run)
+
+
+async def answer_clinical_question(
+    question: str,
+    session_id: UUID | None = None,
+) -> AgentAnswer:
+    """Answer a question, refusing early when the knowledge base is empty.
+
+    The empty-index case is checked here rather than inside the graph: it is a
+    configuration problem, not a retrieval outcome, and it deserves a distinct
+    status code instead of an abstention that looks like a content gap.
+    """
+    if knowledge_base.stats()["chunk_count"] == 0:
+        raise KnowledgeBaseEmptyError(
+            "No knowledge has been indexed yet, so no question can be answered."
+        )
+    return await answer_question(question, session_id)
 
 
 async def answer_question(
@@ -59,4 +78,5 @@ async def answer_question(
         citations=list(final_state.get("citations") or []),
         confidence=final_state.get("confidence") or "abstained",
         route=final_state.get("route", ""),
+        nice_validation=final_state.get("nice_validation") or nice_not_run(),
     )

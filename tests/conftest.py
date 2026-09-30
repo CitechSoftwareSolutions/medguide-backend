@@ -1,8 +1,8 @@
-"""Shared fixtures for the agent and retrieval tests.
+"""Shared fixtures.
 
-No test in this suite reaches the network. The Claude adapter is always stubbed,
-and embeddings are replaced with a tiny deterministic vector space so retrieval
-behaviour can be asserted exactly.
+No test in this suite reaches the network or loads the real embedding model.
+The model adapter is always stubbed, and embeddings are replaced with a tiny
+deterministic vector space so retrieval behaviour can be asserted exactly.
 """
 
 from __future__ import annotations
@@ -11,8 +11,11 @@ import math
 
 import pytest
 
-from src.config.settings import get_settings
-from src.repositories import vector_repository
+from src.shared.config import get_settings
+from src.tools.tool_01_knowledge_base import service as tool_01
+from src.tools.tool_02_nice_guidance import service as tool_02
+
+pytest_plugins = ["tests.graph_stubs"]  # the ``stub`` and ``no_nice_guidance`` fixtures
 
 # A four-axis stand-in for a sentence embedding. Each term owns one axis, so
 # cosine similarity between texts is exactly predictable in the assertions.
@@ -26,25 +29,25 @@ def fake_vector(text: str) -> list[float]:
     counts = [float(lowered.count(term)) for term in FAKE_VOCABULARY]
     norm = math.sqrt(sum(value * value for value in counts))
     if norm == 0.0:
-        # An out-of-vocabulary query must still be a unit vector, but one that
-        # is orthogonal to every indexed term so it scores zero everywhere.
-        return [0.0] * (FAKE_DIMENSIONS - 1) + [0.0]
+        # An out-of-vocabulary text scores zero against everything.
+        return [0.0] * FAKE_DIMENSIONS
     return [value / norm for value in counts]
 
 
 @pytest.fixture
 def isolated_vector_store(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Point the vector store at a temporary directory with tiny vectors."""
-    monkeypatch.setenv("VECTOR_STORE_DIR", str(tmp_path / "vector_store"))
+    """Point both tools' stores at temporary directories with tiny vectors."""
+    monkeypatch.setenv("KNOWLEDGE_BASE_VECTOR_STORE_DIR", str(tmp_path / "tool_01_store"))
+    monkeypatch.setenv("NICE_VECTOR_STORE_DIR", str(tmp_path / "tool_02_store"))
     monkeypatch.setenv("EMBEDDING_DIMENSIONS", str(FAKE_DIMENSIONS))
     get_settings.cache_clear()
-
-    # Rebuild the module-level index against the new directory and dimensions.
-    vector_repository.load_or_create()
+    tool_01.load()
+    tool_02.load()
     yield
 
     get_settings.cache_clear()
-    vector_repository.load_or_create()
+    tool_01.load()
+    tool_02.load()
 
 
 @pytest.fixture
@@ -52,15 +55,15 @@ def fake_embeddings(monkeypatch: pytest.MonkeyPatch):
     """Replace the sentence-transformer with the toy vector space."""
     import numpy as np
 
-    from src.services import rag_service
+    from src.shared import indexing
 
     monkeypatch.setattr(
-        rag_service,
+        indexing,
         "encode_documents",
         lambda texts: np.array([fake_vector(text) for text in texts], dtype=np.float32),
     )
     monkeypatch.setattr(
-        rag_service,
+        indexing,
         "encode_query",
         lambda text: np.array(fake_vector(text), dtype=np.float32),
     )

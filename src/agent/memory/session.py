@@ -10,11 +10,10 @@ import logging
 import threading
 import time
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from src.agent.memory.checkpointer import get_checkpointer
-from src.config import get_settings
-from src.utils import new_identifier
+from src.shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ _last_seen: dict[str, float] = {}
 
 def resolve_session_id(session_id: UUID | str | None) -> str:
     """Return the caller's session identifier, minting one when absent."""
-    return str(session_id) if session_id else str(new_identifier())
+    return str(session_id) if session_id else str(uuid4())
 
 
 def session_config(session_id: str) -> dict[str, Any]:

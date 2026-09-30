@@ -21,6 +21,12 @@ dev = [
     "pytest-asyncio",
 ]
 
+[tool.uv]
+# scikit-learn arrives through sentence-transformers. Windows Smart App Control
+# blocks a native DLL in the 1.9.1 wheel (_datasets_pair.pyd), which stops the
+# embedding model from loading; the 1.7 wheels pass its reputation check.
+constraint-dependencies = ["scikit-learn==1.7.2"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

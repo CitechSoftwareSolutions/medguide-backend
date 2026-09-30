@@ -1,3 +1,9 @@
+"""The FastAPI application: startup, middleware and routes.
+
+Layout: ``src/agent`` orchestrates, ``src/tools`` holds Tool 01 (knowledge base)
+and Tool 02 (NICE guidance), and ``src/shared`` holds what both use.
+"""
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -5,19 +11,22 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.agent.llm import warm_chat_model, warm_embedding_model
-from src.config import get_settings
-from src.exceptions import register_exception_handlers
-from src.middlewares import add_request_timing
-from src.repositories import vector_repository
-from src.routes import agent_router, rag_router
-from src.seeders import seed_vector_store_from_documents
+from src.agent.ollama_client import warm_chat_model
+from src.agent.routes import router as agent_router
+from src.shared.config import get_settings
+from src.shared.embeddings import warm_embedding_model
+from src.shared.error_handlers import register_exception_handlers
+from src.shared.request_timing import add_request_timing
+from src.tools.tool_01_knowledge_base import service as tool_01
+from src.tools.tool_01_knowledge_base.routes import router as tool_01_router
+from src.tools.tool_02_nice_guidance import service as tool_02
+from src.tools.tool_02_nice_guidance.routes import router as tool_02_router
 
 logger = logging.getLogger(__name__)
 
 
 def _prepare_knowledge_index() -> None:
-    """Index the PDFs in ``src/data`` and make the knowledge base searchable.
+    """Index both tools' PDFs and make them searchable.
 
     A failure here is logged and tolerated rather than aborting startup.
     Loading the embedding model downloads it on first run, so this step depends
@@ -28,15 +37,29 @@ def _prepare_knowledge_index() -> None:
     """
     try:
         warm_embedding_model()
-        vector_repository.load_or_create()
-        seed_vector_store_from_documents()
-        warm_chat_model()
-        logger.info("Knowledge index ready")
+        tool_01.load()
+        tool_01.sync()
     except Exception:
         logger.exception(
             "Could not prepare the knowledge index. The API will serve, but "
             "/api/v1/agent/ask will fail until this is resolved."
         )
+        return
+
+    # Tool 02 only checks answers, so a failure here is logged and the assistant
+    # keeps answering; each answer then reports the check unavailable or not
+    # covered.
+    try:
+        tool_02.load()
+        tool_02.sync()
+    except Exception:
+        logger.exception("Could not prepare the NICE index; answers will not be validated")
+
+    try:
+        warm_chat_model()
+    except Exception:
+        logger.exception("Could not preload the chat model; the first question will be slow")
+    logger.info("Knowledge index ready")
 
 
 @asynccontextmanager
@@ -85,8 +108,9 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
-app.include_router(rag_router)
 app.include_router(agent_router)
+app.include_router(tool_01_router)
+app.include_router(tool_02_router)
 
 
 @app.get("/health")

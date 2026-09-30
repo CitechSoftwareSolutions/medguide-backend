@@ -1,10 +1,61 @@
 # Medical Knowledge Base API
 
-A FastAPI service that answers clinical questions from guideline PDFs. The PDFs
-are embedded with `all-MiniLM-L6-v2` and stored in a local FAISS index, which is
-the only data store: there is no database to provision or migrate. Routes,
-controllers, services and repositories are plain functions; Pydantic classes
-validate API data.
+A FastAPI service that answers clinical questions for medical staff. An agent,
+built with LangGraph and MedGemma, uses two tools:
+
+- **Tool 01: knowledge base.** The institution's curated guideline PDFs. Every
+  answer is written from these passages alone.
+- **Tool 02: NICE guidance.** NICE guideline PDFs. Every answer is checked
+  against them after it is written. They are never used as answer material.
+
+Each tool embeds its PDFs with `all-MiniLM-L6-v2` into its own local FAISS
+index. There is no database to provision or migrate.
+
+## Project structure
+
+```text
+backend/
+├── main.py                        # App startup, middleware and routes
+├── src/
+│   ├── agent/                     # Agentic orchestration (LangGraph + MedGemma)
+│   │   ├── agent.py               #   Entrypoint: answer_clinical_question()
+│   │   ├── routes.py              #   POST /api/v1/agent/ask
+│   │   ├── schemas.py             #   Request and response models for /ask
+│   │   ├── state.py               #   Typed graph state
+│   │   ├── citations.py           #   [n] passage numbering and citations
+│   │   ├── ollama_client.py       #   The only code that calls the model
+│   │   ├── supervisor/            #   Routes each request, or declines it
+│   │   ├── knowledge_qa/          #   The graph that runs Tool 01 + Tool 02
+│   │   └── memory/                #   Chat sessions and checkpoints
+│   ├── tools/
+│   │   ├── tool_01_knowledge_base/
+│   │   │   ├── data/              #   Knowledge base PDFs
+│   │   │   ├── service.py         #   Its vector store: index, search, sync
+│   │   │   ├── nodes.py           #   retrieve_knowledge_base graph node
+│   │   │   └── routes.py          #   /api/v1/rag endpoints
+│   │   └── tool_02_nice_guidance/
+│   │       ├── data/              #   NICE guideline PDFs
+│   │       ├── service.py         #   Its vector store: index, search, sync
+│   │       ├── nodes.py           #   retrieve_nice and validate_against_nice
+│   │       ├── prompts.py         #   The NICE check prompt
+│   │       └── routes.py          #   /api/v1/nice endpoints
+│   └── shared/                    # Used by the agent and both tools
+│       ├── config.py              #   Settings from the environment and .env
+│       ├── errors.py              #   Application errors
+│       ├── error_handlers.py      #   One JSON error format for every failure
+│       ├── request_timing.py      #   X-Process-Time-Ms header
+│       ├── embeddings.py          #   The sentence-embedding model
+│       ├── vector_store.py        #   A FAISS index with its metadata
+│       ├── indexing.py            #   Chunk, embed and search text in a store
+│       ├── documents.py           #   PDF extraction and folder sync
+│       ├── document_routes.py     #   The document endpoints both tools mount
+│       └── schemas.py             #   Document request and response models
+├── tests/                         # Mirrors src/: agent/, tools/, shared/
+└── var/                           # Generated FAISS indexes, one per tool
+```
+
+Both tools have the same layout. `shared/` never imports from `agent/` or
+`tools/`, so both can use it without import cycles.
 
 ## Run it
 
@@ -17,156 +68,185 @@ uv sync --group dev
 Start the development server:
 
 ```powershell
-uv run fastapi dev main.py
+uv run python -m fastapi dev main.py
 ```
 
+Tools are run through `python -m` because Windows Smart App Control can block
+the unsigned `.exe` launchers uv creates in `.venv\Scripts`. It also blocks a
+native DLL in scikit-learn 1.9.1, which `sentence-transformers` depends on, so
+`pyproject.toml` pins scikit-learn to 1.7.2. If another package gets blocked,
+Event Viewer names the file under Applications and Services Logs → Microsoft →
+Windows → CodeIntegrity → Operational; pin that package to a version that
+loads.
+
 Open <http://127.0.0.1:8000/docs> to try the generated OpenAPI documentation.
-On startup the application loads the embedding model and indexes every PDF in
-`src/data` into the FAISS vector store so the assistant has something to search.
-To add knowledge, drop a PDF into `src/data` and restart. Files are tracked by a
-hash of their content, so unchanged PDFs are not re-embedded, edited ones are
-re-indexed, and deleted ones are removed from the index. Scanned PDFs without a
-text layer are skipped with a warning.
+On startup the application loads the embedding model and syncs each tool's
+`data/` folder into its FAISS index. This runs in the background, so the port
+opens immediately.
+
+To add a PDF, drop it into the tool's `data/` folder and restart, or upload it
+through the tool's endpoint. Files are tracked by a hash of their content, so
+unchanged PDFs are not re-embedded, edited ones are re-indexed, and deleted ones
+are removed from the index. Scanned PDFs without a text layer are skipped with a
+warning. After changing how PDFs are extracted, call the tool's `reindex`
+endpoint, because an unchanged file is not re-read on restart.
 
 > **Run one worker only.** Chat sessions are held in process memory. Under more
 > than one uvicorn worker, consecutive requests for the same session land on
 > different processes at random and conversation memory appears to vanish
 > intermittently. Use `--workers 1` until session memory is moved into
-> a shared store. `fastapi dev` is already single-worker. The FAISS index is
+> a shared store. `fastapi dev` is already single-worker. The FAISS indexes are
 > also held in process memory, so a second worker would not see uploads made
 > through the first.
 
-## The question-answering assistant
+## How a question is answered
 
-`POST /api/v1/agent/ask` answers a clinical question using only the indexed
-knowledge base. It is built for medical staff: answers keep clinical terminology
-and report dosing and contraindications as the entries state them.
-
-Answers are generated by **MedGemma 1.5 (4B)** running locally in
-[Ollama](https://ollama.com); nothing leaves the machine. Install and start
-Ollama, then pull the model once:
+`POST /api/v1/agent/ask` runs the agent. Answers are generated by
+**MedGemma 1.5 (4B)** running locally in [Ollama](https://ollama.com); nothing
+leaves the machine. Install and start Ollama, then pull the model once:
 
 ```powershell
 ollama pull medgemma1.5:4b
 ```
 
-The API preloads the model at startup. If Ollama is not running, the endpoint
-returns `503 agent_unavailable` rather than failing at startup. A question makes
-about five model calls (routing, query rewriting, relevance grading, answering,
-and a groundedness check), so expect answers to take a minute or two on a
-laptop GPU.
+1. The **supervisor** (`agent/supervisor/`) routes the request to the
+   `knowledge_qa` capability, or declines it if it is not a medical question.
+2. **knowledge_qa** (`agent/knowledge_qa/`) rewrites the question into a search
+   query. **Tool 01 and Tool 02 search at the same time** with that query.
+3. Tool 01's passages are graded for relevance. If none are relevant, the query
+   is broadened once and both tools search again.
+4. An answer is written from Tool 01's passages only, citing each claim `[n]`.
+5. A groundedness audit rejects unsupported claims. The answer is rewritten
+   once, or the assistant abstains instead of guessing.
+6. **Tool 02** checks the verified answer against its NICE passages and reports
+   `nice_validation` next to it.
 
-**Accuracy over fluency.** A graph node audits every draft answer against the
-passages it was built from and rejects unsupported claims, so the assistant
-abstains when the knowledge base does not cover a question instead of answering
-from the model's own medical knowledge. An abstention is reported as
-`"confidence": "abstained"`, and every clinical claim in a real answer carries a
-`[n]` marker resolved in the `citations` array.
+A question makes about six model calls, so expect answers to take a few minutes
+on a laptop GPU. If Ollama is not running, or the embedding model cannot load,
+the endpoint returns `503 agent_unavailable`. An abstention is reported as
+`"confidence": "abstained"`.
 
 Session memory is keyed on `session_id`: send back the value from a previous
 answer to ask a follow-up in the same conversation. Memory lasts for the process
 lifetime and is not persisted.
 
-### Configuration
+### Tool 02's check
+
+The check reports next to the answer and never changes the answer or its
+confidence:
+
+| Status | Meaning |
+| --- | --- |
+| `consistent` | NICE addresses the answer and contradicts none of it |
+| `conflicts` | NICE disagrees; each point is listed with its NICE passage markers |
+| `not_covered` | No NICE passage addresses the answer |
+| `unavailable` | The NICE search or the check failed; the answer is still returned |
+| `not_run` | There was no answer to check (abstained or out of scope) |
+
+MedGemma gives each claim in the answer a verdict: it agrees with NICE,
+contradicts it, or isn't addressed. The code then works out the status and
+writes the summary. A verdict only counts if it cites a real NICE passage, and
+a contradiction also has to say what NICE says instead. Otherwise the claim
+counts as not addressed, so a point NICE never mentions can't show up as a
+conflict. The check fails open because the answer has already been verified
+against the knowledge base.
+
+Example of an answer that NICE disagrees with:
+
+```json
+"nice_validation": {
+  "status": "conflicts",
+  "summary": "NICE guidance disagrees with 1 claim in this answer.",
+  "conflicts": [
+    {
+      "claim": "Start with a sulfonylurea.",
+      "nice_position": "Start with metformin, then add an SGLT-2 inhibitor.",
+      "markers": [1]
+    }
+  ],
+  "citations": [
+    {"marker": 1, "chunk_id": "...", "document_id": "pdf-...",
+     "title": "Type 2 diabetes in adults: management", "score": 0.70}
+  ]
+}
+```
+
+The check is done by a 4B model, so treat its verdicts as a prompt to look,
+not as a ruling, and spot-check them against the cited NICE passages.
+
+## Configuration
+
+Every setting is optional; copy `.env.example` to `.env` to override one.
+Defaults live in `src/shared/config.py`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is listening |
-| `OLLAMA_MODEL` | `medgemma1.5:4b` | The answering model |
+| `OLLAMA_MODEL` | `medgemma1.5:4b` | The agent's model |
 | `OLLAMA_NUM_CTX` | `8192` | Context window; keep it fixed, as a change reloads the model |
 | `OLLAMA_TIMEOUT_SECONDS` | `300` | Longest wait for one model call |
 | `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded when idle |
 | `AGENT_MAX_ANSWER_TOKENS` | `2048` | Answer length cap, including MedGemma's thinking |
-| `EMBEDDING_MODEL_NAME` | `sentence-transformers/all-MiniLM-L6-v2` | Local embedding model |
-| `VECTOR_STORE_DIR` | `var/vector_store` | Where the FAISS index is persisted |
-| `DOCUMENTS_DIR` | `src/data` | PDFs indexed into the vector store on startup |
+| `EMBEDDING_MODEL_NAME` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model for both tools |
 | `MAX_UPLOAD_BYTES` | `20971520` | Largest accepted PDF upload (20 MB) |
-| `RETRIEVAL_TOP_K` | `8` | Candidates fetched per search |
-| `RETRIEVAL_MIN_SCORE` | `0.35` | Cosine floor applied before grading |
+| `KNOWLEDGE_BASE_DOCUMENTS_DIR` | `src/tools/tool_01_knowledge_base/data` | Tool 01's PDFs |
+| `KNOWLEDGE_BASE_VECTOR_STORE_DIR` | `var/tool_01_knowledge_base` | Tool 01's FAISS index |
+| `KNOWLEDGE_BASE_TOP_K` | `8` | Tool 01 passages fetched per search |
+| `KNOWLEDGE_BASE_MIN_SCORE` | `0.35` | Cosine floor for Tool 01 passages |
+| `NICE_DOCUMENTS_DIR` | `src/tools/tool_02_nice_guidance/data` | Tool 02's PDFs |
+| `NICE_VECTOR_STORE_DIR` | `var/tool_02_nice_guidance` | Tool 02's FAISS index |
+| `NICE_TOP_K` | `6` | Distinct Tool 02 passages given to the check |
+| `NICE_MIN_SCORE` | `0.35` | Cosine floor for Tool 02 passages |
 | `SESSION_MAX_TURNS` | `20` | History window kept per session |
 | `SESSION_TTL_SECONDS` | `3600` | Idle lifetime before a session is evicted |
-
-## Tests
-
-Run the full test suite with:
-
-```powershell
-uv run pytest
-```
-
-Each test that touches the vector store gets its own temporary FAISS directory,
-so the suite never modifies `var/vector_store` or `src/data`. The tests cover
-settings, DTO validation, PDF extraction and syncing, uploads, the RAG routes,
-and global exception responses.
-
-No test needs Ollama. The model adapter is stubbed throughout, and
-embeddings are replaced with a small deterministic vector space so retrieval
-behaviour can be asserted exactly. The agent tests cover the graph's control
-flow rather than its prose: when it answers, when it retries a search, when it
-rewrites an ungrounded answer, and when it refuses.
 
 ## API
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Application health check |
-| `POST` | `/api/v1/agent/ask` | Answer a clinical question from the index |
-| `GET` | `/api/v1/rag/documents` | List every document in the vector store |
-| `POST` | `/api/v1/rag/documents` | Index plain text, searchable immediately |
-| `POST` | `/api/v1/rag/documents/upload` | Upload a PDF (multipart field `file`); saved to `src/data` and indexed. A name already in use gets a `_2`, `_3`... suffix; nothing is replaced |
-| `DELETE` | `/api/v1/rag/documents/{document_id}` | Remove a document from the index (and its PDF file, for PDFs) |
-| `POST` | `/api/v1/rag/reindex` | Rebuild the index from the PDFs in `src/data` |
-| `GET` | `/api/v1/rag/stats` | Report how much knowledge is searchable |
+| `POST` | `/api/v1/agent/ask` | Answer a clinical question from Tool 01, checked by Tool 02 |
 
-The `/api/v1/rag` write endpoints change what the assistant treats as ground
-truth and are currently unauthenticated. Put them behind an owner-only guard
-before running this anywhere but a development machine.
+Each tool mounts the same document endpoints: Tool 01 under `/api/v1/rag`,
+Tool 02 under `/api/v1/nice`.
 
-Example upload:
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/documents` | List every document in the tool's store |
+| `POST` | `/documents` | Index plain text, searchable immediately |
+| `POST` | `/documents/upload` | Upload a PDF (multipart field `file`); saved to the tool's `data/` folder and indexed. A name already in use gets a `_2`, `_3`... suffix; nothing is replaced |
+| `DELETE` | `/documents/{document_id}` | Remove a document (and its PDF file, for PDFs) |
+| `POST` | `/reindex` | Rebuild the store from the tool's `data/` folder |
+| `GET` | `/stats` | Report how much is searchable |
+
+These write endpoints change what the assistant treats as ground truth and are
+unauthenticated. Put them behind an owner-only guard before running this
+anywhere but a development machine.
+
+Example upload to Tool 02:
 
 ```powershell
-curl.exe -F "file=@Asthma_Guideline.pdf" http://127.0.0.1:8000/api/v1/rag/documents/upload
+curl.exe -F "file=@headaches.pdf" http://127.0.0.1:8000/api/v1/nice/documents/upload
 ```
 
-## Structure
+Every error, expected or not, returns the same JSON body
+(`{"error": ..., "message": ...}`) through the handlers in
+`src/shared/error_handlers.py`.
 
-```text
-src/
-├── agent/         # LangGraph orchestration over MedGemma (Ollama) and FAISS
-│   ├── agent.py     # answer_question(): the only entrypoint other layers use
-│   ├── graph.py     # Supervisor graph: routes a request to one capability
-│   ├── state.py     # Typed graph state and the history reducer
-│   ├── llm/         # Ollama adapter and the local embedding model
-│   ├── memory/      # Session identity and the conversation checkpointer
-│   ├── nodes/       # Node implementations for both graphs
-│   ├── prompts/     # Byte-stable system prompts (kept stable for caching)
-│   └── tools/       # Capability subgraphs and the routing registry
-├── config/        # Settings read from the environment and .env
-├── controllers/   # Functions that coordinate HTTP results
-├── dto/           # Pydantic request and response schemas
-├── exceptions/    # Domain errors and global exception handlers
-├── middlewares/   # Request timing middleware
-├── repositories/  # The FAISS vector store and its metadata sidecar
-├── routes/        # FastAPI endpoint functions
-├── data/          # PDF guidelines indexed into the vector store
-├── seeders/       # Startup loading of src/data into the vector store
-├── services/      # Business use-case functions
-├── utils/         # Small general helpers
-└── validations/   # Reusable domain validation rules
+## Tests
+
+```powershell
+uv run python -m pytest
 ```
 
-Each source folder has an `__init__.py`, making it an explicit Python package.
-Python can also use namespace packages without these files, but explicit package
-markers make imports, tooling, and project navigation more predictable for this
-application. Do not add them to generated folders such as `__pycache__`.
+`tests/` mirrors `src/`: `agent/`, `tools/` and `shared/`. No test needs Ollama
+or the real embedding model. The model is replaced by a scripted stub
+(`tests/graph_stubs.py`), and embeddings by a small fixed vector space so
+retrieval can be asserted exactly. Each test that touches a vector store gets
+temporary directories, so the suite never modifies `var/` or the tools' `data/`
+folders.
 
-## Validation and errors
-
-Pydantic, included with FastAPI, is the right validation package for API request
-and response schemas. `IndexDocumentRequest` handles field shapes and OpenAPI
-documentation; the `validations/` functions handle reusable
-domain rules such as trimming text and deduplicating tags.
-
-Expected domain errors (such as an invalid or duplicate PDF), malformed requests, and
-unexpected failures all pass through the global handlers in
-`src/exceptions/handlers.py` and return a consistent JSON error body.
+The agent tests cover the graph's control flow: when it answers, retries a
+search, rewrites an ungrounded answer, or refuses. The Tool 02 tests check that
+both tools search in the same step, that NICE text never reaches the prompts
+that write the answer, and that each check status is reached.
