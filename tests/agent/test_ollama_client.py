@@ -174,3 +174,37 @@ async def test_missing_model_becomes_agent_unavailable(
         await ollama_client.complete_text(
             system="System.", messages=[{"role": "user", "content": "Hi"}], label="test"
         )
+
+
+async def test_each_call_reports_its_tokens_and_durations_to_the_running_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ollama's nanosecond durations are converted and handed to the step timer."""
+    from src.agent.timing import timed
+
+    reply = httpx.Response(
+        200,
+        json={
+            "message": {"role": "assistant", "content": "An answer."},
+            "done_reason": "stop",
+            "prompt_eval_count": 1800,
+            "prompt_eval_duration": 18_000_000_000,
+            "eval_count": 240,
+            "eval_duration": 30_000_000_000,
+        },
+    )
+    install_transport(monkeypatch, lambda _: reply)
+
+    async def node(state):
+        await ollama_client.complete_text(
+            system="s", messages=[{"role": "user", "content": "q"}], label="synthesize"
+        )
+        return {}
+
+    [timing] = (await timed("synthesize", node)({}))["timings"]
+
+    assert timing["model_calls"] == 1
+    assert timing["prompt_tokens"] == 1800
+    assert timing["prompt_seconds"] == pytest.approx(18.0)
+    assert timing["output_tokens"] == 240
+    assert timing["output_seconds"] == pytest.approx(30.0)

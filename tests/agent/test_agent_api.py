@@ -29,7 +29,6 @@ def make_answer(**overrides) -> AgentAnswer:
             )
         ],
         "confidence": "high",
-        "route": "knowledge_qa",
     }
     return AgentAnswer(**{**fields, **overrides})
 
@@ -65,6 +64,7 @@ def test_ask_endpoint_returns_the_answer_envelope(monkeypatch: pytest.MonkeyPatc
         "score": pytest.approx(0.82),
     }
     assert body["nice_validation"]["status"] == "not_run"
+    assert body["timings"] == [] and body["total_seconds"] == 0.0
 
 
 def test_ask_endpoint_returns_the_nice_validation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,3 +148,36 @@ async def test_delegates_once_knowledge_exists(monkeypatch: pytest.MonkeyPatch) 
 
     assert received == [("Question?", None)]
     assert result.session_id == "session-abc"
+
+
+def test_ask_endpoint_returns_each_step_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = make_answer(
+        timings=[
+            {"step": "tool_01.retrieve_knowledge_base", "seconds": 0.05},
+            {
+                "step": "synthesize",
+                "seconds": 38.2,
+                "model_calls": 1,
+                "prompt_tokens": 1850,
+                "prompt_seconds": 18.6,
+                "output_tokens": 310,
+                "output_seconds": 19.3,
+            },
+        ],
+        total_seconds=40.1,
+    )
+
+    with client_answering(monkeypatch, answer) as client:
+        body = client.post("/api/v1/agent/ask", json={"question": "Q?"}).json()["data"]
+
+    assert body["total_seconds"] == 40.1
+    assert body["timings"][0] == {
+        "step": "tool_01.retrieve_knowledge_base",
+        "seconds": 0.05,
+        "model_calls": None,
+        "prompt_tokens": None,
+        "prompt_seconds": None,
+        "output_tokens": None,
+        "output_seconds": None,
+    }
+    assert body["timings"][1]["output_tokens"] == 310

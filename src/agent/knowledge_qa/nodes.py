@@ -25,7 +25,6 @@ from src.agent.citations import CITATION_MARKER, citations_in, format_passages
 from src.agent.knowledge_qa.prompts import (
     ABSTENTION_MESSAGE,
     BROADEN_QUERY_SYSTEM,
-    GRADE_RELEVANCE_SYSTEM,
     REWRITE_QUERY_SYSTEM,
     SYNTHESIZE_SYSTEM,
     VERIFY_GROUNDEDNESS_SYSTEM,
@@ -56,24 +55,6 @@ class RewrittenQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     search_query: str = Field(description="The standalone search query.")
-
-
-class PassageVerdict(BaseModel):
-    """Whether one retrieved passage is worth showing to the answerer."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    passage: int = Field(description="The 1-based number of the passage judged.")
-    keep: bool = Field(description="True when the passage helps answer the question.")
-    reason: str = Field(description="A brief justification.")
-
-
-class RelevanceGrade(BaseModel):
-    """Verdicts for every retrieved passage."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    verdicts: list[PassageVerdict]
 
 
 class GroundednessVerdict(BaseModel):
@@ -112,8 +93,16 @@ def _confidence(chunks: list[RetrievedChunk]) -> Confidence:
 
 
 async def rewrite_query(state: QaState) -> dict:
-    """Turn the question plus history into a standalone search query."""
+    """Turn the question plus history into a standalone search query.
+
+    A rewrite only folds earlier turns into the question ("and in children?"),
+    so a first question is searched as asked, without a model call.
+    """
     question = state["question"]
+    history = state.get("history", [])
+    if not history:
+        return {"search_query": question}
+
     try:
         result = await complete_structured(
             system=REWRITE_QUERY_SYSTEM,
@@ -121,7 +110,7 @@ async def rewrite_query(state: QaState) -> dict:
                 {
                     "role": "user",
                     "content": (
-                        f"Earlier conversation:\n{_format_history(state.get('history', []))}"
+                        f"Earlier conversation:\n{_format_history(history)}"
                         f"\n\nCurrent question:\n{question}"
                     ),
                 }
@@ -157,47 +146,19 @@ async def broaden_query(state: QaState) -> dict:
     return {"search_query": broadened}
 
 
-async def grade_relevance(state: QaState) -> dict:
-    """Drop retrieved passages that merely share vocabulary with the question."""
-    chunks = state.get("chunks", [])
-    if not chunks:
-        return {"relevant_chunks": []}
+async def join_searches(state: QaState) -> dict:
+    """Wait for both tools' searches. Deterministic; no model involved.
 
-    try:
-        grade = await complete_structured(
-            system=GRADE_RELEVANCE_SYSTEM,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Question:\n{state['question']}\n\n"
-                        f"Passages:\n{format_passages(chunks)}"
-                    ),
-                }
-            ],
-            schema=RelevanceGrade,
-            label="grade_relevance",
-        )
-    except AgentUnavailableError:
-        # Keep what the score floor already allowed. The groundedness check
-        # downstream is the real accuracy gate, so a grader outage costs
-        # precision, not safety.
-        logger.warning("Relevance grading failed; keeping all retrieved passages")
-        return {"relevant_chunks": chunks}
-
-    keep = {
-        verdict.passage
-        for verdict in grade.verdicts
-        if verdict.keep and 1 <= verdict.passage <= len(chunks)
-    }
-    relevant = [chunk for number, chunk in enumerate(chunks, start=1) if number in keep]
-    logger.debug("Kept %d of %d passages after grading", len(relevant), len(chunks))
-    return {"relevant_chunks": relevant}
+    There is no relevance-grading model call: Tool 01's search already drops
+    passages under the cosine floor (``KNOWLEDGE_BASE_MIN_SCORE``), and the
+    groundedness check still rejects any answer its passages do not support.
+    """
+    return {}
 
 
 async def synthesize(state: QaState) -> dict:
-    """Write the answer from the graded passages, citing each claim."""
-    chunks = state.get("relevant_chunks", [])
+    """Write the answer from Tool 01's passages, citing each claim."""
+    chunks = state.get("chunks", [])
     attempts = state.get("synthesis_attempts", 0)
 
     content = (
@@ -251,7 +212,7 @@ def _claim_is_in_passages(claim: str, chunks: list[RetrievedChunk]) -> bool:
 
 async def verify_groundedness(state: QaState) -> dict:
     """Audit the draft answer against its passages before it can be returned."""
-    chunks = state.get("relevant_chunks", [])
+    chunks = state.get("chunks", [])
     answer = state.get("answer", "")
 
     try:
@@ -314,9 +275,9 @@ async def abstain(state: QaState) -> dict:
     }
 
 
-def after_grade(state: QaState) -> str:
-    """Route on whether anything relevant was found, with one retry allowed."""
-    if state.get("relevant_chunks"):
+def after_search(state: QaState) -> str:
+    """Route on whether Tool 01 found anything above the score floor, with one retry."""
+    if state.get("chunks"):
         return "synthesize"
     if state.get("retrieval_attempts", 0) < MAX_RETRIEVAL_ATTEMPTS:
         return "broaden_query"

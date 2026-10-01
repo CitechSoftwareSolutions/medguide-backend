@@ -24,6 +24,15 @@ from src.tools.tool_02_nice_guidance.routes import router as tool_02_router
 
 logger = logging.getLogger(__name__)
 
+# Uvicorn configures only its own loggers, so without this the application's
+# INFO lines (step timings, index syncs) never reach the terminal.
+_app_logger = logging.getLogger("src")
+if not _app_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)-9s %(name)s - %(message)s"))
+    _app_logger.addHandler(_handler)
+    _app_logger.setLevel(logging.INFO)
+
 
 def _prepare_knowledge_index() -> None:
     """Index both tools' PDFs and make them searchable.

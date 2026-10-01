@@ -10,6 +10,7 @@ from src.agent.schemas import (
     CitationData,
     NiceConflictData,
     NiceValidationData,
+    StepTimingData,
 )
 from src.agent.state import Citation, NiceValidation
 
@@ -43,7 +44,8 @@ async def ask_question(payload: AskQuestionRequest) -> AnswerResponse:
             answer=result.answer,
             citations=[_citation(citation) for citation in result.citations],
             confidence=result.confidence,
-            route=result.route,
             nice_validation=_nice_validation(result.nice_validation),
+            timings=[StepTimingData(**timing) for timing in result.timings],
+            total_seconds=result.total_seconds,
         )
     )

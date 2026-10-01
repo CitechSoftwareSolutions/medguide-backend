@@ -1,7 +1,7 @@
 """The agent: LangGraph orchestration over MedGemma (via Ollama).
 
-* ``supervisor/``   routes each request to a capability or declines it
-* ``knowledge_qa/`` the capability that runs Tool 01 and Tool 02
+* ``knowledge_qa/`` the graph that runs Tool 01 and Tool 02 for each question
+* ``graph.py``      wraps knowledge_qa with chat memory (the session graph)
 * ``memory/``       chat session identity and checkpoints
 * ``agent.py``      the entrypoint; ``routes.py`` exposes it over HTTP
 

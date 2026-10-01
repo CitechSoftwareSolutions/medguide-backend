@@ -12,7 +12,7 @@ import pytest
 from src.agent.knowledge_qa import nodes as qa_nodes
 from src.shared.errors import AgentUnavailableError
 from src.tools.tool_01_knowledge_base import service as tool_01
-from tests.graph_stubs import StubModel, make_chunk, run, set_retrieval
+from tests.graph_stubs import EARLIER_TURNS, StubModel, make_chunk, run, set_retrieval
 
 pytestmark = pytest.mark.usefixtures("no_nice_guidance")
 
@@ -32,12 +32,60 @@ async def test_answers_and_cites_when_passages_support_it(
     assert state["citations"][0]["chunk_id"] == "chunk-Migraine"
 
 
-async def test_broadens_once_then_abstains_when_nothing_is_relevant(
+async def test_first_question_makes_only_the_answer_and_audit_calls(
     stub: StubModel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A fruitless search is retried exactly once before refusing."""
-    stub.keep_passages = False
+    """No routing, rewriting or grading call: the answer path is two model calls.
+
+    Tool 02's check is the third, and only when it has NICE passages to check.
+    """
     set_retrieval(monkeypatch, [make_chunk()])
+
+    await run()
+
+    assert stub.calls == ["synthesize", "verify_groundedness"]
+
+
+async def test_first_question_is_searched_as_asked(
+    stub: StubModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no history there is nothing to fold in, so no rewrite call is made."""
+    queries: list[str] = []
+
+    def retrieve(query, top_k=None):
+        queries.append(query)
+        return [make_chunk()]
+
+    monkeypatch.setattr(tool_01, "retrieve", retrieve)
+
+    await run("How is migraine managed?")
+
+    assert queries == ["How is migraine managed?"]
+    assert "rewrite_query" not in stub.calls
+
+
+async def test_follow_up_question_is_rewritten_with_history(
+    stub: StubModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queries: list[str] = []
+
+    def retrieve(query, top_k=None):
+        queries.append(query)
+        return [make_chunk()]
+
+    monkeypatch.setattr(tool_01, "retrieve", retrieve)
+
+    await run("And in children?", history=EARLIER_TURNS)
+
+    assert queries == ["rewrite_query-result"]
+    assert "How is migraine managed?" in stub.prompts["rewrite_query"][0]
+
+
+async def test_broadens_once_then_abstains_when_nothing_is_found(
+    stub: StubModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A search with nothing above the score floor is retried once, then refused."""
+    set_retrieval(monkeypatch, [])
 
     state = await run()
 
@@ -120,25 +168,6 @@ async def test_abstains_when_the_groundedness_check_is_unavailable(
     assert state["answer"] != "Supportive care is indicated [1]."
 
 
-async def test_grading_outage_keeps_retrieved_passages(
-    stub: StubModel, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A grader outage costs precision, not availability."""
-
-    async def structured(*, schema, label, **kwargs):
-        if label == "grade_relevance":
-            raise AgentUnavailableError("model down")
-        return await stub.structured(schema=schema, label=label, **kwargs)
-
-    monkeypatch.setattr(qa_nodes, "complete_structured", structured)
-    set_retrieval(monkeypatch, [make_chunk()])
-
-    state = await run()
-
-    assert not state.get("abstained")
-    assert state["citations"]
-
-
 async def test_rewrite_outage_falls_back_to_the_raw_question(
     stub: StubModel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -157,9 +186,9 @@ async def test_rewrite_outage_falls_back_to_the_raw_question(
     monkeypatch.setattr(qa_nodes, "complete_structured", structured)
     monkeypatch.setattr(tool_01, "retrieve", retrieve)
 
-    state = await run("How is migraine managed?")
+    state = await run("And in children?", history=EARLIER_TURNS)
 
-    assert queries == ["How is migraine managed?"]
+    assert queries == ["And in children?"]
     assert not state.get("abstained")
 
 

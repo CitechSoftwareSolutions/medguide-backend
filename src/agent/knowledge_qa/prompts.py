@@ -35,21 +35,6 @@ Widen it by exactly one step:
 Output the broadened query only, with no commentary.\
 """
 
-GRADE_RELEVANCE_SYSTEM = """\
-You judge whether retrieved knowledge-base passages can help answer a \
-clinician's question.
-
-For each numbered passage, decide:
-- keep: the passage contains information that helps answer the question, even \
-partially.
-- drop: the passage is about a different subject, or merely shares vocabulary \
-with the question without addressing it.
-
-Judge only topical usefulness. Do not judge whether the passage fully answers \
-the question, and do not use knowledge of your own. A passage that answers one \
-part of a multi-part question should be kept.\
-"""
-
 SYNTHESIZE_SYSTEM = """\
 You are a clinical reference assistant answering questions from medical staff, \
 using only an institution's curated knowledge base.

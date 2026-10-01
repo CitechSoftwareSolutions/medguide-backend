@@ -29,6 +29,7 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from src.agent.timing import ModelCall, record_model_call
 from src.shared.config import get_settings
 from src.shared.errors import AgentUnavailableError
 
@@ -127,12 +128,14 @@ async def _chat(
     except Exception as exc:  # narrowed and re-raised by _translate
         raise _translate(exc, label) from exc
 
-    logger.debug(
-        "model call %s: prompt_tokens=%s output_tokens=%s done_reason=%s",
-        label,
-        body.get("prompt_eval_count"),
-        body.get("eval_count"),
-        body.get("done_reason"),
+    # Ollama reports durations in nanoseconds.
+    record_model_call(
+        ModelCall(
+            prompt_tokens=int(body.get("prompt_eval_count") or 0),
+            prompt_seconds=(body.get("prompt_eval_duration") or 0) / 1e9,
+            output_tokens=int(body.get("eval_count") or 0),
+            output_seconds=(body.get("eval_duration") or 0) / 1e9,
+        )
     )
     if body.get("done_reason") == "length":
         logger.warning("Model output for %s hit the %d-token limit", label, max_tokens)

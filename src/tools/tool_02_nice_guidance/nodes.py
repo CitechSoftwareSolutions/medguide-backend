@@ -11,6 +11,7 @@ base, so a NICE outage reports ``unavailable`` instead of withholding it.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Literal
 
 import anyio
@@ -76,13 +77,42 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
+_WORD = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)*")
+_STOPWORDS = frozenset("a an and are as at be by for from in is of on or the to with".split())
+# Share of each side's words the other must contain to count as a restatement.
+_RESTATEMENT_OVERLAP = 0.85
+
+
+def _words(text: str) -> set[str]:
+    return {word for word in _WORD.findall(text.lower()) if word not in _STOPWORDS}
+
+
+def _restates(claim: str, nice_says: str) -> bool:
+    """Whether "what NICE says" is, in substance, the claim itself.
+
+    A small model sometimes marks a claim as contradicted while quoting the claim
+    back as NICE's position. Checked in both directions, so "Offer aspirin"
+    against "Do not offer aspirin" is still a contradiction, as is any change
+    of number.
+    """
+    claim_words, nice_words = _words(claim), _words(nice_says)
+    if not claim_words or not nice_words:
+        return False
+    shared = len(claim_words & nice_words)
+    return (
+        shared / len(claim_words) >= _RESTATEMENT_OVERLAP
+        and shared / len(nice_words) >= _RESTATEMENT_OVERLAP
+    )
+
+
 def _nice_result(verdict: NiceVerdict, chunks: list[RetrievedChunk]) -> NiceValidation:
     """Derive the overall result from the per-claim verdicts.
 
     A verdict counts only when it is backed: it names at least one NICE passage
     that exists and, for a contradiction, states what NICE says instead. An
     unbacked "agrees" or "contradicts" is treated as not addressed, which stops
-    a claim NICE never mentions from being reported as a conflict.
+    a claim NICE never mentions from being reported as a conflict. A
+    "contradiction" whose NICE position restates the claim counts as agreement.
 
     The summary is written here rather than by the model, which tends to copy
     passage text instead of summarizing.
@@ -96,9 +126,12 @@ def _nice_result(verdict: NiceVerdict, chunks: list[RetrievedChunk]) -> NiceVali
             continue
         markers = [citation["marker"] for citation in resolve_markers(check.passages, chunks)]
         nice_says = check.nice_says.strip()
-        if check.verdict == "contradicts" and markers and nice_says:
+        verdict_label = check.verdict
+        if verdict_label == "contradicts" and _restates(claim, nice_says):
+            verdict_label = "agrees"
+        if verdict_label == "contradicts" and markers and nice_says:
             conflicts.append(NiceConflict(claim=claim, nice_position=nice_says, markers=markers))
-        elif check.verdict == "agrees" and markers:
+        elif verdict_label == "agrees" and markers:
             agrees.append(markers)
         else:
             not_addressed += 1

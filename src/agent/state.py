@@ -1,7 +1,9 @@
-"""Typed state shared by the supervisor graph and its capability subgraphs."""
+"""Typed state for the session graph and the knowledge_qa graph."""
 
+import operator
 from typing import Annotated, Literal, NotRequired, TypedDict
 
+from src.agent.timing import StepTiming
 from src.shared.config import get_settings
 from src.shared.indexing import RetrievedChunk
 
@@ -72,26 +74,26 @@ def append_turns(existing: list[Turn] | None, incoming: list[Turn]) -> list[Turn
     return combined[-max_turns:] if max_turns > 0 else combined
 
 
-class SupervisorState(TypedDict):
-    """State owned by the routing graph."""
+class SessionState(TypedDict):
+    """State owned by the session graph; this is what the checkpointer saves."""
 
     session_id: str
     question: str
     history: Annotated[list[Turn], append_turns]
-    route: NotRequired[str]
     answer: NotRequired[str]
     citations: NotRequired[list[Citation]]
     confidence: NotRequired[Confidence]
     nice_validation: NotRequired[NiceValidation]
+    timings: NotRequired[list[StepTiming]]
 
 
 class QaState(TypedDict):
-    """State owned by the knowledge question-answering subgraph.
+    """State owned by the knowledge_qa graph, fresh for every question.
 
     The ``session_id``, ``question``, ``history``, ``answer``, ``citations`` and
-    ``confidence`` keys are named to match :class:`SupervisorState` so values
-    cross the subgraph boundary without an explicit adapter. ``history`` carries
-    no reducer here: the subgraph only reads it, and declaring the reducer twice
+    ``confidence`` keys are named to match :class:`SessionState` so values
+    cross the graph boundary without an explicit adapter. ``history`` carries
+    no reducer here: knowledge_qa only reads it, and declaring the reducer twice
     would append the same turns at both levels.
 
     ``chunks`` (tool 01) and ``nice_chunks`` (tool 02) are written by different
@@ -108,7 +110,6 @@ class QaState(TypedDict):
     nice_chunks: NotRequired[list[RetrievedChunk]]
     nice_search_failed: NotRequired[bool]
     nice_validation: NotRequired[NiceValidation]
-    relevant_chunks: NotRequired[list[RetrievedChunk]]
     answer: NotRequired[str]
     citations: NotRequired[list[Citation]]
     confidence: NotRequired[Confidence]
@@ -117,3 +118,5 @@ class QaState(TypedDict):
     retrieval_attempts: NotRequired[int]
     synthesis_attempts: NotRequired[int]
     abstained: NotRequired[bool]
+    # Tool 01 and Tool 02 add theirs in the same step, so entries are appended.
+    timings: Annotated[list[StepTiming], operator.add]

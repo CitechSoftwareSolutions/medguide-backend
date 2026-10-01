@@ -7,12 +7,14 @@ agent (graphs, model adapter, memory) stays replaceable behind it.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from src.agent.graph import get_session_graph
 from src.agent.memory import resolve_session_id, session_config, touch
 from src.agent.state import Citation, Confidence, NiceValidation, nice_not_run
-from src.agent.supervisor.graph import get_supervisor_graph
+from src.agent.timing import StepTiming, log_summary
 from src.shared.errors import KnowledgeBaseEmptyError
 from src.tools.tool_01_knowledge_base import service as knowledge_base
 
@@ -27,8 +29,10 @@ class AgentAnswer:
     answer: str
     citations: list[Citation] = field(default_factory=list)
     confidence: Confidence = "abstained"
-    route: str = ""
     nice_validation: NiceValidation = field(default_factory=nice_not_run)
+    # Each graph step in the order it finished, and the whole question's time.
+    timings: list[StepTiming] = field(default_factory=list)
+    total_seconds: float = 0.0
 
 
 async def answer_clinical_question(
@@ -60,7 +64,8 @@ async def answer_question(
     resolved = resolve_session_id(session_id)
     touch(resolved)
 
-    graph = get_supervisor_graph()
+    started = time.perf_counter()
+    graph = get_session_graph()
     final_state = await graph.ainvoke(
         {
             "session_id": resolved,
@@ -71,12 +76,16 @@ async def answer_question(
         },
         config=session_config(resolved),
     )
+    total_seconds = round(time.perf_counter() - started, 3)
+    timings = list(final_state.get("timings") or [])
+    log_summary(timings, total_seconds)
 
     return AgentAnswer(
         session_id=resolved,
         answer=final_state.get("answer", ""),
         citations=list(final_state.get("citations") or []),
         confidence=final_state.get("confidence") or "abstained",
-        route=final_state.get("route", ""),
         nice_validation=final_state.get("nice_validation") or nice_not_run(),
+        timings=timings,
+        total_seconds=total_seconds,
     )

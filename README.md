@@ -21,10 +21,10 @@ backend/
 │   │   ├── agent.py               #   Entrypoint: answer_clinical_question()
 │   │   ├── routes.py              #   POST /api/v1/agent/ask
 │   │   ├── schemas.py             #   Request and response models for /ask
+│   │   ├── graph.py               #   Session graph: knowledge_qa + chat memory
 │   │   ├── state.py               #   Typed graph state
 │   │   ├── citations.py           #   [n] passage numbering and citations
 │   │   ├── ollama_client.py       #   The only code that calls the model
-│   │   ├── supervisor/            #   Routes each request, or declines it
 │   │   ├── knowledge_qa/          #   The graph that runs Tool 01 + Tool 02
 │   │   └── memory/                #   Chat sessions and checkpoints
 │   ├── tools/
@@ -109,22 +109,48 @@ leaves the machine. Install and start Ollama, then pull the model once:
 ollama pull medgemma1.5:4b
 ```
 
-1. The **supervisor** (`agent/supervisor/`) routes the request to the
-   `knowledge_qa` capability, or declines it if it is not a medical question.
-2. **knowledge_qa** (`agent/knowledge_qa/`) rewrites the question into a search
-   query. **Tool 01 and Tool 02 search at the same time** with that query.
-3. Tool 01's passages are graded for relevance. If none are relevant, the query
-   is broadened once and both tools search again.
+Every question goes to the **knowledge_qa** graph (`agent/knowledge_qa/`):
+
+1. A follow-up question is rewritten into a standalone search query using the
+   chat history. A first question is searched as asked, with no model call.
+2. **Tool 01 and Tool 02 search at the same time** with that query.
+3. If Tool 01 finds nothing above its similarity cutoff
+   (`KNOWLEDGE_BASE_MIN_SCORE`), the query is broadened once and both tools
+   search again. There is no separate relevance-grading call.
 4. An answer is written from Tool 01's passages only, citing each claim `[n]`.
 5. A groundedness audit rejects unsupported claims. The answer is rewritten
    once, or the assistant abstains instead of guessing.
 6. **Tool 02** checks the verified answer against its NICE passages and reports
    `nice_validation` next to it.
 
-A question makes about six model calls, so expect answers to take a few minutes
-on a laptop GPU. If Ollama is not running, or the embedding model cannot load,
-the endpoint returns `503 agent_unavailable`. An abstention is reported as
+A first question makes three model calls: the answer, the groundedness audit
+and the NICE check. A follow-up adds the rewrite, and an empty search adds the
+broadening. There is no routing step, so an off-topic question gets the
+knowledge base's "no information" abstention rather than a separate decline.
+If Ollama is not running, or the embedding model cannot load, the endpoint
+returns `503 agent_unavailable`. An abstention is reported as
 `"confidence": "abstained"`.
+
+```mermaid
+flowchart TD
+    Q([Question]) --> rewrite["rewrite_query<br/>(model call only for follow-ups)"]
+    rewrite --> T1["Tool 01: retrieve_knowledge_base"]
+    rewrite --> T2["Tool 02: retrieve_nice"]
+    T1 --> join[join_searches]
+    T2 -. waits for both .-> join
+    join -->|nothing above cutoff, 1st time| broaden[broaden_query]
+    broaden --> T1
+    broaden --> T2
+    join -->|passages found| synth["synthesize<br/>(Tool 01 passages only)"]
+    synth --> verify[verify_groundedness]
+    verify -->|unsupported claim, 1st time| synth
+    verify -->|grounded| validate["Tool 02: validate_against_nice"]
+    T2 -. NICE passages .-> validate
+    join -->|still nothing| abstain[abstain]
+    verify -->|still ungrounded| abstain
+    validate --> A(["answer + citations + nice_validation"])
+    abstain --> A
+```
 
 Session memory is keyed on `session_id`: send back the value from a previous
 answer to ask a follow-up in the same conversation. Memory lasts for the process

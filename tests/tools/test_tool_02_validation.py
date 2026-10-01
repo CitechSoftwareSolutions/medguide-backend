@@ -11,7 +11,6 @@ import threading
 
 import pytest
 
-from src.agent.supervisor import nodes as supervisor_nodes
 from src.tools.tool_01_knowledge_base import service as tool_01
 from src.tools.tool_02_nice_guidance import service as tool_02
 from tests.graph_stubs import (
@@ -58,7 +57,7 @@ async def test_answer_is_written_from_the_knowledge_base_only(
 
     await run()
 
-    for label in ("grade_relevance", "synthesize", "verify_groundedness"):
+    for label in ("synthesize", "verify_groundedness"):
         assert all("NICE-ONLY-SENTINEL" not in prompt for prompt in stub.prompts[label])
     assert "NICE-ONLY-SENTINEL" in stub.prompts["validate_against_nice"][0]
 
@@ -77,7 +76,7 @@ async def test_validator_sees_the_answer_without_knowledge_base_markers(
     assert "indicated [1]" not in prompt
 
 
-async def test_tool_02_searches_with_the_rewritten_then_broadened_query(
+async def test_tool_02_searches_with_the_same_then_broadened_query(
     stub: StubModel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both tools always search with the same query, including on a retry."""
@@ -92,7 +91,7 @@ async def test_tool_02_searches_with_the_rewritten_then_broadened_query(
 
     await run()
 
-    assert nice_queries == ["rewrite_query-result", "broaden_query-result"]
+    assert nice_queries == ["How is migraine managed?", "broaden_query-result"]
 
 
 async def test_consistent_answer_reports_nice_citations(
@@ -168,6 +167,8 @@ def claim(verdict: str, nice_says: str = "", passages: list[int] | None = None) 
         ([claim("agrees", "Same.", [])], "not_covered"),
         ([claim("not_addressed")], "not_covered"),
         ([], "not_covered"),
+        # A "contradiction" that quotes the claim back as NICE's position agrees.
+        ([claim("contradicts", "A claim the model judged contradicts.", [1])], "consistent"),
     ],
 )
 async def test_status_is_derived_from_backed_claim_verdicts(
@@ -252,18 +253,46 @@ async def test_validator_outage_is_unavailable_and_the_answer_stands(
 async def test_abstention_does_not_run_the_nice_check(
     stub: StubModel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stub.keep_passages = False
-    set_retrieval(monkeypatch, [make_chunk()])
+    """Off-topic questions end here too: Tool 01 finds nothing, so nothing is checked."""
+    set_retrieval(monkeypatch, [])
     set_nice_retrieval(monkeypatch, make_nice_chunk())
 
-    state = await run()
+    state = await run("What is the weather today?")
 
     assert state["abstained"] is True
     assert state["nice_validation"]["status"] == "not_run"
     assert "validate_against_nice" not in stub.calls
 
 
-async def test_out_of_scope_request_does_not_run_the_nice_check() -> None:
-    result = await supervisor_nodes.decline_out_of_scope({})
+@pytest.mark.parametrize(
+    ("answer_claim", "nice_says", "expected_status"),
+    [
+        # Seen live: MedGemma quoted the claim back as NICE's "contradicting" position.
+        (
+            "choose second-line agents based on cardiovascular and renal risk, not HbA1c alone.",
+            "choose second-line agents based on cardiovascular and renal risk, not HbA1c alone.",
+            "consistent",
+        ),
+        # Real contradictions that share most of their words must still conflict.
+        ("Offer aspirin for acute migraine.", "Do not offer aspirin for acute migraine.", "conflicts"),
+        ("Give metformin 500 mg twice daily.", "Give metformin 1000 mg twice daily.", "conflicts"),
+    ],
+)
+async def test_restated_claim_is_agreement_but_real_contradictions_stand(
+    stub: StubModel,
+    monkeypatch: pytest.MonkeyPatch,
+    answer_claim: str,
+    nice_says: str,
+    expected_status: str,
+) -> None:
+    stub.nice_verdict = {
+        "claims": [
+            {"claim": answer_claim, "verdict": "contradicts", "nice_says": nice_says, "passages": [1]}
+        ]
+    }
+    set_retrieval(monkeypatch, [make_chunk()])
+    set_nice_retrieval(monkeypatch, make_nice_chunk())
 
-    assert result["nice_validation"]["status"] == "not_run"
+    state = await run()
+
+    assert state["nice_validation"]["status"] == expected_status

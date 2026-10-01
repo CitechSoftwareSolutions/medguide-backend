@@ -35,7 +35,6 @@ class StubModel:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.prompts: dict[str, list[str]] = {}
-        self.keep_passages = True
         self.grounded = True
         self.answer = "Supportive care is indicated [1]."
         self.verify_raises = False
@@ -60,13 +59,6 @@ class StubModel:
         self._record(label, messages)
         if label in {"rewrite_query", "broaden_query"}:
             return schema(search_query=f"{label}-result")
-        if label == "grade_relevance":
-            return schema(
-                verdicts=[
-                    {"passage": number, "keep": self.keep_passages, "reason": "stub"}
-                    for number in range(1, 6)
-                ]
-            )
         if label == "verify_groundedness":
             if self.verify_raises:
                 raise AgentUnavailableError("model down")
@@ -119,11 +111,17 @@ def set_retrieval(monkeypatch: pytest.MonkeyPatch, *results: list[RetrievedChunk
     monkeypatch.setattr(tool_01, "retrieve", retrieve)
 
 
-async def run(question: str = "How is migraine managed?") -> dict:
-    """Invoke the compiled subgraph once."""
+EARLIER_TURNS = [
+    {"role": "user", "content": "How is migraine managed?"},
+    {"role": "assistant", "content": "Supportive care is indicated [1]."},
+]
+
+
+async def run(question: str = "How is migraine managed?", history: list | None = None) -> dict:
+    """Invoke the compiled knowledge_qa graph once; pass ``history`` for a follow-up."""
     graph = build_knowledge_qa_graph().compile()
     return await graph.ainvoke(
-        {"session_id": "test-session", "question": question, "history": []}
+        {"session_id": "test-session", "question": question, "history": history or []}
     )
 
 

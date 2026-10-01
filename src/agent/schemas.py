@@ -79,6 +79,20 @@ def _nice_not_run() -> NiceValidationData:
     )
 
 
+class StepTimingData(BaseModel):
+    """How long one step took. Model fields appear only for steps that called MedGemma."""
+
+    step: str = Field(description="The step; tool steps start with tool_01. or tool_02.")
+    seconds: float
+    model_calls: int | None = None
+    prompt_tokens: int | None = Field(default=None, description="Tokens MedGemma read.")
+    prompt_seconds: float | None = None
+    output_tokens: int | None = Field(
+        default=None, description="Tokens MedGemma wrote, including its thinking."
+    )
+    output_seconds: float | None = None
+
+
 class AnswerData(BaseModel):
     """One answer, with the provenance the client needs to verify it."""
 
@@ -93,8 +107,11 @@ class AnswerData(BaseModel):
             "none was invented."
         )
     )
-    route: str = Field(description="The capability that handled the request.")
     nice_validation: NiceValidationData = Field(default_factory=_nice_not_run)
+    timings: list[StepTimingData] = Field(
+        default_factory=list, description="Each step in the order it finished."
+    )
+    total_seconds: float = Field(default=0.0, description="Time spent answering, in seconds.")
 
 
 class AnswerResponse(BaseModel):

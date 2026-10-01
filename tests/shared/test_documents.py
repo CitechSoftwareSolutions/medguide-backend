@@ -14,6 +14,7 @@ from tests.sample_pdfs import DIABETES_PDF, MIGRAINE_PDF, TREMOR_PDF
 
 pytestmark = pytest.mark.usefixtures("isolated_vector_store", "fake_embeddings")
 
+
 def test_extraction_drops_running_headers_and_page_numbers() -> None:
     """Page furniture would otherwise be embedded into every chunk."""
     text = documents.extract_pdf_text(MIGRAINE_PDF)
@@ -22,6 +23,7 @@ def test_extraction_drops_running_headers_and_page_numbers() -> None:
     assert "Page 1 of" not in text
     assert text.count("Clinical Teaching Note") <= 1
 
+
 def test_title_comes_from_the_file_name() -> None:
     """Underscores, the .docx remnant and a copy suffix are cleaned away."""
     path = Path("Dizziness_in_Elderly_Assessment_and_Management_1.docx.pdf")
@@ -29,6 +31,7 @@ def test_title_comes_from_the_file_name() -> None:
     assert documents.document_title(path) == (
         "Dizziness in Elderly Assessment and Management"
     )
+
 
 def test_sync_indexes_each_pdf_once(tmp_path: Path) -> None:
     """A second sync over unchanged files embeds nothing."""
@@ -46,6 +49,7 @@ def test_sync_indexes_each_pdf_once(tmp_path: Path) -> None:
         "chunk_count": chunks_after_first,
     }
 
+
 def test_sync_indexes_every_pdf_that_shares_a_title(tmp_path: Path) -> None:
     """Documents are told apart by content, so same-titled PDFs all go in."""
     shutil.copy(MIGRAINE_PDF, tmp_path / "Guideline.pdf")
@@ -57,9 +61,11 @@ def test_sync_indexes_every_pdf_that_shares_a_title(tmp_path: Path) -> None:
     assert result == {"added": 3, "removed": 0}
     assert tool_01.stats()["document_count"] == 3
 
+
 def test_title_keeps_a_year_suffix() -> None:
     """Only short copy suffixes are stripped from the title."""
     assert documents.document_title(Path("Diabetes_2024.pdf")) == "Diabetes 2024"
+
 
 def test_sync_drops_removed_pdfs_but_keeps_api_documents(tmp_path: Path) -> None:
     """Only chunks that came from the documents folder are pruned."""
@@ -73,6 +79,7 @@ def test_sync_drops_removed_pdfs_but_keeps_api_documents(tmp_path: Path) -> None
     assert result == {"added": 0, "removed": 1}
     assert tool_01.STORE.document_ids() == {api_document["document_id"]}
 
+
 def test_indexed_pdf_is_retrievable(tmp_path: Path) -> None:
     """A question about the PDF's subject finds its chunks."""
     shutil.copy(MIGRAINE_PDF, tmp_path)
@@ -83,10 +90,12 @@ def test_indexed_pdf_is_retrievable(tmp_path: Path) -> None:
     assert results
     assert results[0]["title"] == "Migraine Diagnosis and Management"
 
+
 @pytest.fixture
 def folder(tmp_path: Path) -> Path:
     """A documents folder apart from the vector store the fixture creates."""
     return tmp_path / "docs"
+
 
 def test_upload_saves_and_indexes_the_pdf(folder: Path) -> None:
     """An upload is searchable immediately and lands in the documents folder."""
@@ -101,6 +110,7 @@ def test_upload_saves_and_indexes_the_pdf(folder: Path) -> None:
     # The startup sync must treat the uploaded file as already indexed.
     assert tool_01.sync(folder) == {"added": 0, "removed": 0}
 
+
 def test_upload_rejects_the_same_pdf_twice(folder: Path) -> None:
     """Identical content under any name is a duplicate."""
     content = MIGRAINE_PDF.read_bytes()
@@ -108,6 +118,7 @@ def test_upload_rejects_the_same_pdf_twice(folder: Path) -> None:
 
     with pytest.raises(DuplicateDocumentError):
         tool_01.upload_pdf("another-name.pdf", content, folder)
+
 
 def test_upload_with_an_existing_name_keeps_both_documents(folder: Path) -> None:
     """Nothing is replaced: the second PDF is saved alongside under a suffix."""
@@ -132,6 +143,7 @@ def test_upload_with_an_existing_name_keeps_both_documents(folder: Path) -> None
         "removed": 0,
     }
 
+
 @pytest.mark.parametrize(
     ("file_name", "saved_as"),
     [
@@ -149,6 +161,7 @@ def test_upload_file_names_cannot_escape_the_directory(
     assert result["file_name"] == saved_as
     assert [path.name for path in folder.iterdir()] == [saved_as]
 
+
 @pytest.mark.parametrize(
     "content", [b"plain text, not a pdf", b"%PDF-1.7 truncated garbage"]
 )
@@ -161,6 +174,7 @@ def test_upload_rejects_files_that_are_not_readable_pdfs(
 
     assert not folder.exists()
     assert tool_01.STORE.document_ids() == set()
+
 
 def test_removing_a_pdf_document_deletes_its_file(folder: Path) -> None:
     """Otherwise the next sync would index the deleted document again."""
